@@ -12,6 +12,11 @@ enum
     FONT_REGULAR = 0,
     FONT_BOLD = 1,
     FONT_MONO = 2, /* IBM Plex Mono: text guides keep their columns */
+    /* the PS1 theme's extra faces (bold when missing) */
+    FONT_TECH = 3,   /* Share Tech Mono: the name bars, widely spaced */
+    FONT_SQUARE = 4, /* Chakra Petch 700: game titles and numbers */
+    FONT_PS1 = 5,    /* Asap Black: the PS1 shelf's lettering (shelf v3) */
+    FONT_FACES = 6
 };
 
 enum

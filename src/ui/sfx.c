@@ -177,6 +177,19 @@ static Sound load_wav(const char *path, int rate)
     return s;
 }
 
+/* ---------------------------------------------------------------- console sounds (the PS1 theme's) */
+
+static const char *const CONSOLE_FILES[SFX_EVENT_COUNT] = {
+    [SFX_CLICK] = "move.wav", [SFX_SELECT] = "select.wav", [SFX_BACK] = "back.wav",   [SFX_ERROR] = "error.wav",
+    [SFX_OPEN] = "open.wav",  [SFX_CLOSE] = "close.wav",   [SFX_PAGE] = "page.wav",   [SFX_STARTUP] = "startup.wav",
+    [SFX_DISC] = "disc.wav",  [SFX_DONE] = "done.wav"};
+static Sound console[SFX_EVENT_COUNT];
+static int console_found;
+
+#define MAX_SOUND_SECONDS 20 /* longer files are cut: the start-up sound is the longest (about 18 s) */
+
+static void voices_drop(void);
+
 void sfx_init(int rate)
 {
     sound_rate = rate > 0 ? rate : 44100;
@@ -195,6 +208,35 @@ void sfx_init(int rate)
         sounds[st][SFX_SELECT] = make(rate, &SELECT);
         sounds[st][SFX_BACK] = make(rate, &BACK);
     }
+}
+
+int sfx_load_console(const char *dir)
+{
+    console_found = 0;
+    voices_drop(); /* they may point at the sounds about to be freed */
+    for (int i = 0; i < SFX_EVENT_COUNT; ++i)
+    {
+        free(console[i].frames);
+        console[i].frames = NULL;
+        console[i].count = 0;
+        if (!CONSOLE_FILES[i])
+            continue;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", dir, CONSOLE_FILES[i]);
+        console[i] = load_wav(path, sound_rate);
+        const size_t limit = (size_t)sound_rate * MAX_SOUND_SECONDS;
+        if (console[i].count > limit)
+            console[i].count = limit;
+        if (console[i].frames)
+            ++console_found;
+    }
+    SwanStationPS5_log("sfx: %d console sound(s) in %s", console_found, dir);
+    return console_found;
+}
+
+int sfx_console_count(void)
+{
+    return console_found;
 }
 
 void sfx_configure(int new_style, int volume_percent)
@@ -224,14 +266,27 @@ typedef struct
     const Sound *sound;
     size_t pos;
     float gain;
+    bool fixed; /* its gain is not the interface volume's (the PS1 opening) */
 } Voice;
 
 static Voice voices[VOICES];
 static bool game_audio;
 
+static void voices_drop(void)
+{
+    memset(voices, 0, sizeof(voices));
+}
+
 static void voice_start(const Sound *s, float gain)
 {
     Voice *slot = &voices[0];
+    for (int i = 0; i < VOICES; ++i)
+        if (voices[i].sound == s)
+        {
+            /* the same sound again restarts it, so quick scrolling doesn't pile up (shelf v3) */
+            voices[i].pos = 0, voices[i].gain = gain, voices[i].fixed = false;
+            return;
+        }
     for (int i = 0; i < VOICES; ++i)
     {
         if (!voices[i].sound)
@@ -245,6 +300,7 @@ static void voice_start(const Sound *s, float gain)
     slot->sound = s;
     slot->pos = 0;
     slot->gain = gain;
+    slot->fixed = false;
 }
 
 void sfx_mix(int16_t *frames, size_t frame_count)
@@ -254,7 +310,7 @@ void sfx_mix(int16_t *frames, size_t frame_count)
         Voice *p = &voices[v];
         if (!p->sound)
             continue;
-        const float g = p->gain * volume;
+        const float g = p->fixed ? p->gain : p->gain * volume;
         size_t i = 0;
         for (; i < frame_count && p->pos < p->sound->count; ++i, ++p->pos)
             for (int c = 0; c < 2; ++c)
@@ -294,9 +350,77 @@ void sfx_pump(void)
 
 void sfx_play(Sfx id)
 {
-    if (silenced || !enabled || id >= SFX_COUNT || !sounds[style][id].frames || volume <= 0.0f)
+#if defined(SwanStationPS5_PREVIEW)
+    {
+        /* the preview has no speakers: say which sound would play, to check every event has one */
+        static const char *const NAMES[] = {"move", "select", "back", "error", "open", "close", "page", "startup",
+                                            "disc", "done"};
+        if ((int)id >= 0 && id < SFX_EVENT_COUNT)
+            SwanStationPS5_log("sfx: %s", NAMES[id]);
+    }
+#endif
+    if (silenced || !enabled || (int)id < 0 || id >= SFX_EVENT_COUNT || volume <= 0.0f)
         return;
-    voice_start(&sounds[style][id], 1.0f);
+    if (console[id].frames)
+    {
+        voice_start(&console[id], 1.0f);
+        return;
+    }
+    /* no console sound for it: the app's own */
+    switch (id)
+    {
+    case SFX_ERROR:
+    case SFX_CLOSE: id = SFX_BACK; break;
+    case SFX_OPEN:
+    case SFX_DONE: id = SFX_SELECT; break;
+    case SFX_PAGE: id = SFX_CLICK; break;
+    case SFX_STARTUP: return;
+    case SFX_DISC:
+        if (disc_sound.frames)
+            voice_start(&disc_sound, DISC_GAIN);
+        return;
+    default: break;
+    }
+    if (sounds[style][id].frames)
+        voice_start(&sounds[style][id], 1.0f);
+}
+
+/* shelf v3: a sound made at run time (the PS1 opening's, from the BIOS's own bank), interleaved stereo at 44.1 kHz;
+ * resampled to the interface's rate and kept until the next call. Played at the console's level: not the interface
+ * sound's volume or style (a PS1's power-on isn't a menu sound); only the opening's own setting silences it. */
+void sfx_play_pcm(const int16_t *frames, size_t count)
+{
+    static Sound own;
+    for (int i = 0; i < VOICES; ++i)
+        if (voices[i].sound == &own)
+            voices[i].sound = NULL;
+    free(own.frames);
+    own.frames = NULL;
+    own.count = 0;
+    if (!frames || !count)
+        return;
+    const size_t out = (size_t)((double)count * sound_rate / 44100.0);
+    if (!(own.frames = malloc(out * 2 * sizeof(int16_t))))
+        return;
+    for (size_t k = 0; k < out; ++k)
+    {
+        const double pos = (double)k * 44100.0 / sound_rate;
+        const size_t a = (size_t)pos, b = a + 1 < count ? a + 1 : a;
+        const double t = pos - (double)a;
+        for (int c = 0; c < 2; ++c)
+            own.frames[k * 2 + c] = (int16_t)(frames[a * 2 + c] + (frames[b * 2 + c] - frames[a * 2 + c]) * t);
+    }
+    own.count = out;
+    voice_start(&own, 1.0f);
+    for (int i = 0; i < VOICES; ++i)
+        if (voices[i].sound == &own)
+            voices[i].fixed = true;
+}
+
+void sfx_stop_all(void)
+{
+    voices_drop();
+    plat_audio_clear();
 }
 
 void sfx_play_notification(void)
@@ -308,7 +432,10 @@ void sfx_play_notification(void)
 
 void sfx_play_disc(void)
 {
-    if (silenced || !enabled || !disc_sound.frames || volume <= 0.0f)
+    if (silenced || !enabled || volume <= 0.0f)
         return;
-    voice_start(&disc_sound, DISC_GAIN);
+    if (console[SFX_DISC].frames)
+        voice_start(&console[SFX_DISC], 1.0f);
+    else if (disc_sound.frames)
+        voice_start(&disc_sound, DISC_GAIN);
 }

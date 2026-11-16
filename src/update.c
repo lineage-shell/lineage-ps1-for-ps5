@@ -25,7 +25,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define APP_DIR_DEFAULT "/data/homebrew/PPSA98510"
+#define APP_DIR_DEFAULT "/data/homebrew/" SwanStationPS5_TITLE_ID
 
 static SDL_atomic_t state;
 static char version[32], zip_url[512], message[256];
@@ -149,6 +149,11 @@ static int check_thread(void *unused)
 
 void update_check(void)
 {
+#if defined(SwanStationPS5_NO_SELF_UPDATE)
+    /* the fork: never looks for (or installs) an upstream release, which would overwrite it */
+    SDL_AtomicSet(&state, UPDATE_NONE);
+    return;
+#endif
     int s = update_state();
     if (s == UPDATE_CHECKING || s == UPDATE_INSTALLING || s == UPDATE_INSTALLED)
         return;
@@ -295,6 +300,9 @@ static int install_thread(void *unused)
 
 void update_install(void)
 {
+#if defined(SwanStationPS5_NO_SELF_UPDATE)
+    return;
+#endif
     if (update_state() != UPDATE_AVAILABLE)
         return;
     SDL_AtomicSet(&state, UPDATE_INSTALLING);

@@ -10,6 +10,7 @@
 #include "../stats.h"
 #include "coverflow.h"
 #include "draw.h"
+#include "ps1.h"
 #include "icons.h"
 #include "sfx.h"
 #include "text.h"
@@ -105,7 +106,7 @@ void library_stats_screen(uint32_t pressed)
     covers_update_view(L.top, L.top_count, 0);
 
     shelf_backdrop();
-    text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Your library"));
+    ps1_or_title(tr("Your library"));
 
     char value[64], label[96];
     const float gap = 24, w = (plat_width() - 2 * TH_MARGIN - 3 * gap) / 4, y = 130;

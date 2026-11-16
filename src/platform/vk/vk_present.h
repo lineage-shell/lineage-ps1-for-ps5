@@ -43,7 +43,8 @@ double vkp_framegen_hz(void);         /* the display's rate while frames are bei
 void vkp_frame_repeated(void);        /* the core's last frame repeats the picture of the one before */
 void vkp_want_high_refresh(bool on);  /* before vkp_open: the 120 Hz mode */
 bool vkp_set_mode(int width, int height, char *error, size_t size); /* the TV's mode, at once (with the GPU interface); the screen's objects are made again */
-void vkp_want_size(int width, int height); /* before vkp_open: the screen's mode (the canvas's size when the TV has none like it) */
+void vkp_want_size(int width, int height); /* -1, -1: the display's own (native) mode */
+void vkp_output_size(int *width, int *height); /* the screen's mode now */ /* before vkp_open: the screen's mode (the canvas's size when the TV has none like it) */
 void vkp_show_game(float x, float y, float w, float h, float crop, int shader, int tex_w, int tex_h, int lines);
 
 /* The interface drawn by the GPU instead of the CPU canvas (vk_ui.inc). Coordinates are canvas pixels. */

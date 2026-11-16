@@ -295,6 +295,28 @@ static bool create_surface(char *error, size_t size)
     /* the size asked for, else the canvas's (the mode is searched again at the canvas's size when the TV has none like it) */
     uint32_t mode_w = want_width > 0 ? (uint32_t)want_width : (uint32_t)V.cw;
     uint32_t mode_h = want_height > 0 ? (uint32_t)want_height : (uint32_t)V.ch;
+    if (want_width < 0)
+    {
+        /* shelf v3: the display's own resolution: its physical size when a mode has it, else its biggest mode up to 4K */
+        mode_w = display.physicalResolution.width, mode_h = display.physicalResolution.height;
+        bool have = false;
+        uint64_t area = 0;
+        for (uint32_t i = 0; i < mode_count; ++i)
+        {
+            const VkDisplayModeParametersKHR *p = &modes[i].parameters;
+            have |= p->visibleRegion.width == mode_w && p->visibleRegion.height == mode_h;
+        }
+        for (uint32_t i = 0; i < mode_count && !have; ++i)
+        {
+            const VkDisplayModeParametersKHR *p = &modes[i].parameters;
+            const uint64_t a = (uint64_t)p->visibleRegion.width * p->visibleRegion.height;
+            if (p->visibleRegion.height <= 2160 && a > area)
+                area = a, mode_w = p->visibleRegion.width, mode_h = p->visibleRegion.height;
+        }
+        if (!mode_w || !mode_h)
+            mode_w = (uint32_t)V.cw, mode_h = (uint32_t)V.ch;
+        SwanStationPS5_log("vulkan: native mode %ux%u", mode_w, mode_h);
+    }
     for (int pass = 0; pass < 2; ++pass)
     {
         for (uint32_t i = 0; i < mode_count; ++i)
@@ -888,6 +910,12 @@ void vkp_want_size(int width, int height)
 {
     want_width = width;
     want_height = height;
+}
+
+void vkp_output_size(int *width, int *height)
+{
+    *width = (int)V.extent.width;
+    *height = (int)V.extent.height;
 }
 
 static void fg_free(void)
@@ -2631,6 +2659,10 @@ bool vkp_set_mode(int width, int height, char *error, size_t size)
 void vkp_want_size(int width, int height)
 {
     (void)width, (void)height;
+}
+void vkp_output_size(int *width, int *height)
+{
+    *width = 1920, *height = 1080;
 }
 void vkp_ui_game_here(void) {}
 void vkp_ui_blend(bool on)

@@ -19,8 +19,17 @@ void covers_update(int center);
  * shelf position k, center_pos the selected position. */
 void covers_update_view(const int *view, int count, int center_pos);
 
+/* shelf v3: covers requested within `load_radius` positions of the centre and kept there; beyond it the least
+ * recently shown stay until more than `max_textures` are up. Set before covers_update_view; -1 = the stock radii. */
+void covers_set_window(int load_radius, int max_textures);
+/* Frames since game `index`'s texture went up (for a fade in); -1 while there is none. */
+int covers_age(int index);
+
 /* Texture for game `index`; a generated title card until the art is ready. */
 PlatTexture *covers_get(int index);
+/* The PS1 theme's memory-card icon of game `index`'s cover (32x32, nearest-neighbour); NULL until the real cover
+ * has loaded, or when there is none. */
+PlatTexture *covers_icon(int index);
 /* true when the picture is only a generated title card (no real cover found) */
 bool covers_is_placeholder(int index);
 /* Average colour of a loaded cover (0 until it has loaded). */

@@ -45,4 +45,24 @@ void case3d_matte(bool on);
 void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, float pitch, uint32_t tint,
                  bool reflection);
 
+/* P1-14: what the next case3d_draw only takes (then forgets), for a case that is turned in the hand:
+ *   back:       the back and edges' picture from case3d_make_back (NULL: the model's own)
+ *   free_turn:  the turn isn't held short of the back (any yaw: the back shows from a quarter turn on)
+ *   black_tray: the tray is black, as a PAL case's */
+typedef struct
+{
+    PlatTexture *back;
+    bool free_turn, black_tray;
+} Case3dExtras;
+void case3d_extras_next(const Case3dExtras *extras);
+
+/* The back and edges' picture for one game (the caller frees it with plat_texture_free): the back insert (the picture
+ * at back_path, cut to fit without stretching; a plain black back with the title when there is none) and the two spines,
+ * made here: a small four-colour strip at the top, the title down the middle, the serial at the foot. */
+PlatTexture *case3d_make_back(const char *title, const char *serial, const char *region, const char *back_path);
+
+/* The outline on the screen of the case case3d_draw would draw with these (the convex hull of its box, clockwise on
+ * the screen): up to 8 points into xy (x, y pairs); returns how many. `pal`: a PAL case's thickness. */
+int case3d_outline(float cx, float cy, float h, float yaw, float pitch, bool pal, float *xy);
+
 #endif

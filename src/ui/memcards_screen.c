@@ -13,6 +13,7 @@
 #include "coverflow.h"
 #include "draw.h"
 #include "icons.h"
+#include "ps1.h"
 #include "sfx.h"
 #include "sjis_table.h"
 #include "text.h"
@@ -214,8 +215,34 @@ static void scan(void)
             }
 }
 
+/* The PS1 theme's screen (P1-20), as the console's: the arrow goes over the cards, the chosen card's blocks and the
+ * plaques; the name bar says what is under it; what changes a card asks YES / NO first. */
+enum
+{
+    Z_CARDS,
+    Z_BLOCKS,
+    Z_PLAQUES
+};
+enum
+{
+    ACT_EXIT,
+    ACT_BACKUP,
+    ACT_RESTORE,
+    ACT_DELETE,
+    ACT_COUNT
+};
+static struct
+{
+    int zone, block, plaque;
+    bool confirm;   /* YES / NO showing */
+    int action;     /* what it is for */
+    bool yes;       /* YES chosen (NO is the safe one, first) */
+    int import_pick; /* the file Restore card will use */
+} M;
+
 void memcards_open(enum Screen back_to)
 {
+    memset(&M, 0, sizeof(M));
     C.back_to = back_to;
     C.cursor = 0;
     C.scroll = 0;
@@ -260,6 +287,80 @@ static void export_card(const Card *c)
     app_toast(msg);
 }
 
+/* The save on the card a block belongs to (its first block: *first), -1 for a free block */
+static int block_save(const Card *c, int block, bool *first)
+{
+    int b = 0;
+    for (int sv = 0; sv < c->save_count; ++sv)
+        for (int k = 0; k < c->save_blocks[sv]; ++k, ++b)
+            if (b == block)
+            {
+                if (first)
+                    *first = k == 0;
+                return sv;
+            }
+    return -1;
+}
+
+/* Deletes a save as the console does: its blocks marked free in the card's directory (their data stays until
+ * written over). The card is kept as .bak first. */
+static bool delete_save(Card *c, int save)
+{
+    static uint8_t data[CARD_SIZE];
+    FILE *f = fopen(c->path, "rb");
+    if (!f)
+        return false;
+    const bool ok = fread(data, 1, CARD_SIZE, f) == CARD_SIZE;
+    fclose(f);
+    if (!ok || data[0] != 'M' || data[1] != 'C')
+        return false;
+    int first = -1;
+    for (int b = 1, n = 0; b <= 15; ++b)
+        if (data[b * 0x80] == 0x51 && n++ == save)
+        {
+            first = b;
+            break;
+        }
+    if (first < 0)
+        return false;
+    char backup[SwanStationPS5_PATH_MAX + 8];
+    snprintf(backup, sizeof(backup), "%s.bak", c->path);
+    copy_file(c->path, backup, 0);
+    for (int b = first, guard = 0; b >= 1 && b <= 15 && guard < 15; ++guard)
+    {
+        uint8_t *frame = data + b * 0x80;
+        const int next = frame[8] | frame[9] << 8;
+        const bool last = frame[0] == 0x53 || (frame[0] == 0x51 && next == 0xffff);
+        if (frame[0] >= 0x51 && frame[0] <= 0x53)
+            frame[0] = (uint8_t)(frame[0] + 0x50); /* 0x51..53 in use -> 0xA1..A3 deleted */
+        uint8_t x = 0;
+        for (int i = 0; i < 0x7f; ++i)
+            x ^= frame[i];
+        frame[0x7f] = x;
+        if (last)
+            break;
+        /* the next block of the save: its link, if that is a block going on with a save; else the one after */
+        const int linked = next < 15 ? next + 1 : -1;
+        const bool goes_on = linked >= 1 && (data[linked * 0x80] == 0x52 || data[linked * 0x80] == 0x53);
+        if (goes_on)
+            b = linked;
+        else if (b < 15 && (data[(b + 1) * 0x80] == 0x52 || data[(b + 1) * 0x80] == 0x53))
+            b = b + 1;
+        else
+            break;
+    }
+    char temp[SwanStationPS5_PATH_MAX + 8];
+    snprintf(temp, sizeof(temp), "%s.tmp", c->path);
+    FILE *out = fopen(temp, "wb");
+    bool written = out && fwrite(data, 1, CARD_SIZE, out) == CARD_SIZE;
+    if (out)
+        written = fclose(out) == 0 && written;
+    if (!written || rename(temp, c->path) != 0)
+        return false;
+    read_card(c);
+    return true;
+}
+
 static void list_imports(void)
 {
     C.import_count = 0;
@@ -297,8 +398,16 @@ static void import_card(Card *c, const char *name)
         app_toast("That file isn't a PS1 memory card");
 }
 
+#include "ps1_memcards.inc" /* shelf v3: the PS1 theme's memory card screen */
+
 void memcards_screen(uint32_t pressed)
 {
+    if (TH_PS1)
+    {
+        if (!ps1_memcards_input(pressed))
+            ps1_memcards_draw();
+        return;
+    }
     if (C.picking)
     {
         if (pressed & BIT(BTN_UP) && C.import_count)
@@ -343,8 +452,13 @@ void memcards_screen(uint32_t pressed)
     }
     if (pressed & BIT(BTN_CIRCLE))
     {
-        sfx_play(SFX_BACK);
+        sfx_play(SFX_CLOSE);
         app.screen = C.back_to;
+        return;
+    }
+    if (TH_PS1)
+    {
+        ps1_memcards_draw();
         return;
     }
 

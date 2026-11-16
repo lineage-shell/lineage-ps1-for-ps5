@@ -15,9 +15,16 @@
 #include <stdint.h>
 
 #define SwanStationPS5_NAME "SwanStationPS5"           /* identifiers: the User-Agent of network requests, the Vulkan application name */
-#define SwanStationPS5_TITLE "SwanStationPS5" /* what is shown on screen */
-#define SwanStationPS5_TITLE_ID "PPSA98510"
+#define SwanStationPS5_TITLE "SwanStation PS1" /* what is shown on screen (the ps1-console-shelf fork) */
+/* The ps1-console-shelf fork installs beside the official app: its own title ID, the same data folder
+ * (/data/SwanStationPS5) so games, BIOS and saves are shared. */
+#define SwanStationPS5_TITLE_ID "PPSA98511"
+/* The official app's title ID: what the disc daemon payload launches (it is left as it is). */
+#define SwanStationPS5_UPSTREAM_TITLE_ID "PPSA98510"
+/* The fork never replaces itself with an upstream release: update.c checks and installs nothing. */
+#define SwanStationPS5_NO_SELF_UPDATE 1
 #define SwanStationPS5_VERSION "1.6.5"
+#define SwanStationPS5_BIOS_FOLDER "/data/SwanStationPS5/bios" /* shelf v3: the BIOS folder searched first by default (the app's own data folder) */
 #define SwanStationPS5_PATH_MAX 512
 
 /* Pad bits use RetroPad numbering so the host can hand the mask to the core
@@ -120,7 +127,8 @@ typedef struct
     bool pgxp;            /* precise geometry, no wobbling polygons */
     int shader;           /* 0 off, 1 LCD3x, 2 CRT Royale Fast, 3 and 4 retired, 5 to 8 NTSC, 9 to 12 CRT Lottes, CRT Pi, 11 retired, zfast LCD, 13 to 16 CRT Royale, Newpixie, Hyllian NTSC, Mattias */
     bool hd_textures;     /* use a texture pack beside the game when there is one */
-    int theme;            /* enum ThemeId in ui/theme.h */
+    int theme;            /* enum ThemeId in ui/theme.h; the fork keeps it as "ps1_theme" in the shared .ini */
+    int upstream_theme;   /* the official app's "theme", kept as it was so the two apps don't fight over it */
     int crop_edges;       /* 0 off, 1: 8 lines top and bottom, 2: 16 (the black a CRT hid) */
     bool manual_crop;     /* the core's crop mode is ignored (drawn as None) and the picture's area is set by hand (mc_*) */
     int mc_w, mc_h;       /* manual crop: the picture's width and height as a percentage of its normal size (25..150) */
@@ -154,6 +162,11 @@ typedef struct
     bool fmv_smooth;      /* smooth the colour blocks of FMVs (MDEC chroma filter) */
     bool true_colour;     /* 32-bit colour, no dithering */
     bool boot_intro;      /* the PS1's startup logo and sound before the game (a real BIOS) */
+    bool startup_intro;   /* P1-18: the app opens with the BIOS's own startup (no disc), then the library */
+    int shelf_layout;     /* PS1 shelf v3: the library's grid, 0 9x3 (default), 1 6x2 with bigger covers */
+    int shelf_shape;      /* PS1 shelf v3: 0 16:9 (outer groups slide out), 1 4:3 (the original area, dark sides) */
+    int shelf_splat;      /* PS1 shelf v3: splatters 0 pixel (the console's), 1 smooth */
+    bool shelf_logo_scan; /* PS1 shelf v3: the opening's PlayStation screen may read its logo once from a library disc */
     int sharpen;          /* 0 off, 1 light, 2 strong (AMD FidelityFX CAS) */
     bool disc_in_tray;    /* the disc spins flat on its tray, without lifting or growing, as in 1.3.7 */
     bool disc_animation;  /* the disc slides out of its case when a game starts */
@@ -168,7 +181,8 @@ typedef struct
     int run_ahead;        /* 0 off, 1 to 10 frames less input lag */
     bool fast_effects;    /* screen effects on the GPU, without the software copy */
     bool fsr;             /* FSR 1 scales the picture before the shader */
-    char usb_folder[48];  /* a folder name looked for on USB drives: /mnt/ext0/<name>, /mnt/ext1/<name> and /mnt/usb0/<name> to /mnt/usb7/<name> (empty: none) */
+    char bios_folder[256]; /* shelf v3: searched first for a BIOS (Settings > System > BIOS folder) */
+    char usb_folder[256]; /* shelf v3: 256 (was 48), a folder path with spaces fits; a folder name looked for on USB drives: /mnt/ext0/<name>, /mnt/ext1/<name> and /mnt/usb0/<name> to /mnt/usb7/<name> (empty: none) */
     int nfs_timeout;  /* how long an NFS read may take before the connection is given up: 0..4 = 5, 10, 15, 20, 30 s (2 default) */
     char nfs_shares[512]; /* nfs:// addresses of the servers that hold games, ';' between them (empty: none); src/nfs/nfs.h */
     bool nostalgia;       /* while a game is played: no sound of the app, no notices or trophies, and the game is silent */
@@ -213,6 +227,7 @@ typedef struct
 } Paths;
 
 void SwanStationPS5_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+double SwanStationPS5_uptime(void); /* shelf v3: seconds since the app's first log line (log lines carry it) */
 void SwanStationPS5_log_open(const char *path);
 
 /* Small string helpers shared by the frontend. */

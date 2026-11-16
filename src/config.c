@@ -29,7 +29,9 @@ void config_defaults(Settings *s)
     s->dithering = true;
     s->lightgun = 1; /* Off */
     s->analog = true; /* DualShock: it starts in digital mode, so digital-only games still work */
-    s->boot_intro = true; /* the BIOS runs its full start-up (no fast boot) */
+    s->boot_intro = false; /* shelf v3: games fast boot; the app's own opening shows the BIOS's start-up */
+    s->shelf_logo_scan = true; /* shelf v3 */
+    s->startup_intro = true; /* the app opens with the BIOS's startup */
     s->cover_style = COVER_FLAT;
     s->cover_download = true;
     s->ui_sound = 0;  /* Soft */
@@ -39,9 +41,11 @@ void config_defaults(Settings *s)
     s->menu_hold = 1;
     s->quick_resume = true;
     s->update_check = true;
+    snprintf(s->bios_folder, sizeof(s->bios_folder), "%s", SwanStationPS5_BIOS_FOLDER); /* shelf v3 */
     snprintf(s->usb_folder, sizeof(s->usb_folder), "psx"); /* /mnt/ext0/psx, /mnt/ext1/psx and /mnt/usb0/psx to /mnt/usb7/psx */
     s->bezel = false; /* the game's artwork frame, when there is one */
-    s->theme = THEME_GRAYRAT; /* Grayrat (ui/theme.h) */
+    s->theme = THEME_PS1; /* the ps1-console-shelf fork opens on the PS1 console screens (ui/theme.h) */
+    s->upstream_theme = THEME_GRAYRAT; /* the official app's default, written back for it */
     s->pgxp = true; /* no wobbling polygons */
     s->ra_popups = true;
     s->ra_popup_sound = true;
@@ -133,7 +137,7 @@ static bool config_apply(Settings *s, const char *path)
         else if (strcmp(key, "analog") == 0)
             s->analog = as_bool(value);
         else if (strcmp(key, "state_slot") == 0)
-            s->state_slot = atoi(value) % 10;
+            s->state_slot = atoi(value) % 20; /* the PS1 shelf has 20 slots */
         else if (strcmp(key, "last_game") == 0)
             s->last_game = atoi(value);
         else if (strcmp(key, "stick_dpad") == 0)
@@ -191,6 +195,8 @@ static bool config_apply(Settings *s, const char *path)
         else if (strcmp(key, "pgxp") == 0)
             s->pgxp = as_bool(value);
         else if (strcmp(key, "theme") == 0)
+            s->upstream_theme = atoi(value); /* the official app's choice: kept, not used (the fork has its own) */
+        else if (strcmp(key, "ps1_theme") == 0)
         {
             int theme = atoi(value); /* a number that is not a theme (an older or newer file) leaves the default */
             if (theme >= 0 && theme < THEME_COUNT)
@@ -271,6 +277,16 @@ static bool config_apply(Settings *s, const char *path)
             s->true_colour = as_bool(value);
         else if (strcmp(key, "boot_intro") == 0)
             s->boot_intro = as_bool(value);
+        else if (strcmp(key, "startup_intro") == 0)
+            s->startup_intro = as_bool(value);
+        else if (strcmp(key, "shelf_layout") == 0)
+            s->shelf_layout = atoi(value) == 1;
+        else if (strcmp(key, "shelf_shape") == 0) /* shelf v3 */
+            s->shelf_shape = atoi(value) == 1;
+        else if (strcmp(key, "shelf_splat") == 0) /* shelf v3 */
+            s->shelf_splat = atoi(value) == 1;
+        else if (strcmp(key, "shelf_logo_scan") == 0) /* shelf v3 */
+            s->shelf_logo_scan = as_bool(value);
         else if (strcmp(key, "sharpen") == 0)
             s->sharpen = atoi(value) % 3;
         else if (strcmp(key, "disc_in_tray") == 0)
@@ -309,6 +325,8 @@ static bool config_apply(Settings *s, const char *path)
             s->video_out = atoi(value) % 2;
         else if (strcmp(key, "framegen") == 0)
             s->framegen = as_bool(value) ? 1 : atoi(value) == 2 ? 2 : 0;
+        else if (strcmp(key, "bios_folder") == 0) /* shelf v3 */
+            snprintf(s->bios_folder, sizeof(s->bios_folder), "%s", value[0] ? value : SwanStationPS5_BIOS_FOLDER);
         else if (strcmp(key, "usb_folder") == 0)
             snprintf(s->usb_folder, sizeof(s->usb_folder), "%s", value);
         else if (strcmp(key, "nfs_timeout") == 0)
@@ -355,9 +373,46 @@ static bool config_apply(Settings *s, const char *path)
     return true;
 }
 
+/* shelf v3: the fork keeps all its settings in its own shelf.ini, so the official app's SwanStationPS5.ini (same data
+ * folder) is never written. The first time, a SwanStationPS5.ini beside it is imported once (config_imported). */
+static bool imported;
+bool config_imported(void)
+{
+    return imported;
+}
+
+static void import_stock(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    if (!slash || strcmp(slash + 1, "shelf.ini") != 0 || path_exists(path))
+        return;
+    char stock[SwanStationPS5_PATH_MAX];
+    snprintf(stock, sizeof(stock), "%.*s/SwanStationPS5.ini", (int)(slash - path), path);
+    FILE *in = fopen(stock, "rb");
+    if (!in)
+        return;
+    FILE *out = fopen(path, "wb");
+    char buf[4096];
+    size_t n;
+    bool ok = out != NULL;
+    while (ok && (n = fread(buf, 1, sizeof(buf), in)) > 0)
+        ok = fwrite(buf, 1, n, out) == n;
+    fclose(in);
+    if (out && fclose(out) != 0)
+        ok = false;
+    if (!ok)
+    {
+        remove(path);
+        return;
+    }
+    imported = true;
+    SwanStationPS5_log("settings: imported from %s into %s (that file is never written)", stock, path);
+}
+
 void config_load(Settings *s, const char *path)
 {
     config_defaults(s);
+    import_stock(path);
     config_apply(s, path);
 }
 
@@ -391,6 +446,7 @@ bool config_load_game(Settings *out, const Settings *global, const char *path)
     out->remote = global->remote;
     out->update_check = global->update_check;
     snprintf(out->usb_folder, sizeof(out->usb_folder), "%s", global->usb_folder);
+    snprintf(out->bios_folder, sizeof(out->bios_folder), "%s", global->bios_folder); /* shelf v3 */
     snprintf(out->nfs_shares, sizeof(out->nfs_shares), "%s", global->nfs_shares);
     out->nfs_timeout = global->nfs_timeout;
     out->nostalgia = global->nostalgia;
@@ -481,14 +537,16 @@ bool config_save(const Settings *s, const char *path)
             s->update_check);
     fprintf(f, "ntfs_enabled=%d\n", s->ntfs_enabled);
     fprintf(f, "renderer=%d\nusb_folder=%s\nnfs_timeout=%d\nnfs_shares=%s\n", s->renderer, s->usb_folder, s->nfs_timeout, s->nfs_shares);
+    fprintf(f, "shelf_logo_scan=%d\nbios_folder=%s\n", s->shelf_logo_scan, s->bios_folder); /* shelf v3 */
+    fprintf(f, "shelf_fastboot=1\n"); /* shelf v3: the fast boot default was applied once (main.c) */
     fprintf(f, "version=%s\n", SwanStationPS5_VERSION); /* a newer version starts with clean settings (main.c) */
     fprintf(f, "pgxp=%d\nra_popups=%d\nra_tracker=%d\ncrop_edges=%d\n", s->pgxp, s->ra_popups, s->ra_tracker,
             s->crop_edges);
     fprintf(f, "ra_challenges=%d\nra_lb_tracker=%d\nra_popup_sound=%d\n", s->ra_challenges, s->ra_lb_tracker,
             s->ra_popup_sound);
     fprintf(f, "manual_crop=%d\nmc_w=%d\nmc_h=%d\nmc_x=%d\nmc_y=%d\n", s->manual_crop, s->mc_w, s->mc_h, s->mc_x, s->mc_y);
-    fprintf(f, "ra_popup_style=%d\nlightbar=%d\nshader=%d\nhd_textures=%d\ntheme=%d\n", s->ra_popup_style,
-            s->lightbar, s->shader, s->hd_textures, s->theme);
+    fprintf(f, "ra_popup_style=%d\nlightbar=%d\nshader=%d\nhd_textures=%d\ntheme=%d\nps1_theme=%d\n", s->ra_popup_style,
+            s->lightbar, s->shader, s->hd_textures, s->upstream_theme, s->theme);
     fprintf(f, "stick_deadzone=%d\nstick_response=%d\ntrigger_effects=%d\nracing_triggers=%d\nrumble_feel=%d\n",
             s->stick_deadzone, s->stick_response, s->trigger_effects, s->racing_triggers, s->rumble_feel);
     fprintf(f, "lightgun=%d\noverclock=%d\nbrightness=%d\ncolour=%d\nautosave=%d\nbezel=%d\n", s->lightgun,
@@ -497,6 +555,8 @@ bool config_save(const Settings *s, const char *path)
             s->msaa, s->texture_filter, s->filter_2d, s->supersampling, s->deinterlace, s->pal60, s->game_fixes);
     fprintf(f, "fmv_smooth=%d\ntrue_colour=%d\nboot_intro=%d\nsharpen=%d\ndisc_animation=%d\ndisc_in_tray=%d\nnegcon=%d\njewel_cases=%d\ncase_lighting=%d\ndisc_ask=%d\ninstall_to_ext=%d\nrestart_after_game=%d\n",
             s->fmv_smooth, s->true_colour, s->boot_intro, s->sharpen, s->disc_animation, s->disc_in_tray, s->negcon, s->jewel_cases, s->case_lighting, s->disc_ask, s->install_to_ext, s->restart_after_game);
+    fprintf(f, "startup_intro=%d\nshelf_layout=%d\nshelf_shape=%d\nshelf_splat=%d\n", s->startup_intro, s->shelf_layout,
+            s->shelf_shape, s->shelf_splat); /* shelf v3 */
     fprintf(f, "black_frames=%d\n", s->black_frames);
     fprintf(f, "black_frame_intensity=%d\n", s->black_frame_intensity);
     fprintf(f, "touch_mouse=%d\nrun_ahead=%d\nfast_effects=%d\nframegen=%d\nvideo_out=%d\nfsr=%d\nframe_pacing=%d\nnostalgia=%d\n", s->touch_mouse, s->run_ahead,
@@ -529,7 +589,7 @@ void config_paths(Paths *p, const char *root)
     path_join(p->cheats, sizeof(p->cheats), root, "cheats");
     path_join(p->covers, sizeof(p->covers), root, "covers");
     path_join(p->logs, sizeof(p->logs), root, "logs");
-    path_join(p->config, sizeof(p->config), root, "SwanStationPS5.ini");
+    path_join(p->config, sizeof(p->config), root, "shelf.ini"); /* shelf v3: its own file (config_load imports) */
     str_copy(p->user, sizeof(p->user), root);
 }
 
@@ -538,5 +598,5 @@ void config_user_paths(Paths *p, const char *dir)
     str_copy(p->user, sizeof(p->user), dir);
     path_join(p->saves, sizeof(p->saves), dir, "saves");
     path_join(p->states, sizeof(p->states), dir, "states");
-    path_join(p->config, sizeof(p->config), dir, "SwanStationPS5.ini");
+    path_join(p->config, sizeof(p->config), dir, "shelf.ini"); /* shelf v3 */
 }

@@ -13,6 +13,7 @@
 #include "coverflow.h"
 #include "draw.h"
 #include "icons.h"
+#include "ps1.h"
 #include "sfx.h"
 #include "text.h"
 #include "theme.h"
@@ -45,12 +46,13 @@ enum Item
 };
 
 /* slot thumbnails, loaded when the menu opens */
-static PlatTexture *thumbs[10];
-static bool thumbs_loaded[10];
+#define MENU_SLOTS 20 /* shelf v3: 20 save-state slots (the PS1 theme's menu shows ten at a time) */
+static PlatTexture *thumbs[MENU_SLOTS];
+static bool thumbs_loaded[MENU_SLOTS];
 
 static void forget_thumbs(void)
 {
-    for (int s = 0; s < 10; ++s)
+    for (int s = 0; s < MENU_SLOTS; ++s)
     {
         plat_texture_free(thumbs[s]);
         thumbs[s] = NULL;
@@ -92,7 +94,7 @@ void menu_open(void)
     forget_thumbs();
     play_save_resume(true); /* the menu is a good moment: nothing is moving */
     app.screen = SCREEN_MENU;
-    sfx_play(SFX_SELECT);
+    sfx_play(SFX_OPEN);
 }
 
 static bool item_shown(int i)
@@ -139,7 +141,7 @@ static void slot_age(int slot, char *out, size_t size)
  * two seconds so a note typed while the menu is open shows up. */
 static const char *slot_note(int slot)
 {
-    static char notes[10][124];
+    static char notes[MENU_SLOTS][124];
     static uint64_t read_at;
     static const Game *read_for;
     uint64_t now = plat_ticks_us();
@@ -147,7 +149,7 @@ static const char *slot_note(int slot)
     {
         read_for = app.game;
         read_at = now;
-        for (int s = 0; s < 10; ++s)
+        for (int s = 0; s < MENU_SLOTS; ++s)
         {
             char path[SwanStationPS5_PATH_MAX + 8];
             app_state_path(path, sizeof(path) - 8, s);
@@ -216,9 +218,13 @@ static void draw_slots(float x, float y, float w, bool active)
     plat_set_clip(0, 0, 0, 0);
 }
 
+#include "ps1_menu.inc"
+
 void menu_screen(uint32_t pressed)
 {
     /* ------------------------------------------------ input */
+    if (TH_PS1)
+        pressed = ps1_menu_input(pressed); /* the arrows move on the console's grid; L1 / R1 pick the slot */
     int before = M.cursor;
     int step = (pressed & BIT(BTN_DOWN)) ? 1 : (pressed & BIT(BTN_UP)) ? -1 : 0;
     if (step)
@@ -231,7 +237,7 @@ void menu_screen(uint32_t pressed)
         sfx_play(SFX_CLICK);
     bool on_slots = M.cursor == MI_SAVE || M.cursor == MI_LOAD;
     bool left = pressed & BIT(BTN_LEFT), right = pressed & BIT(BTN_RIGHT);
-    if (on_slots && (left || right))
+    if (on_slots && (left || right) && !TH_PS1)
     {
         app.settings.state_slot = (app.settings.state_slot + (right ? 1 : 9)) % 10;
         app.global.state_slot = app.settings.state_slot;
@@ -268,7 +274,7 @@ void menu_screen(uint32_t pressed)
     }
     if (pressed & (BIT(BTN_CIRCLE) | BIT(BTN_MENU)))
     {
-        sfx_play(SFX_BACK);
+        sfx_play(SFX_CLOSE);
         app.screen = SCREEN_GAME;
         return;
     }
@@ -287,11 +293,11 @@ void menu_screen(uint32_t pressed)
             if (host_save_state(st))
             {
                 play_save_thumb(st);
-                snprintf(msg, sizeof(msg), tr("Saved to slot %d"), app.settings.state_slot);
+                snprintf(msg, sizeof(msg), tr("Saved to slot %d"), app.settings.state_slot + TH_PS1 /* shelf v3: 1-20 */);
                 app.screen = SCREEN_GAME;
             }
             else
-                snprintf(msg, sizeof(msg), tr("Couldn't save to slot %d"), app.settings.state_slot);
+                snprintf(msg, sizeof(msg), tr("Couldn't save to slot %d"), app.settings.state_slot + TH_PS1 /* shelf v3: 1-20 */);
             app_toast(msg);
             sfx_play(SFX_SELECT);
             return;
@@ -301,11 +307,11 @@ void menu_screen(uint32_t pressed)
                 str_copy(msg, sizeof(msg), tr("Not allowed in hardcore mode"));
             else if (host_load_state(st))
             {
-                snprintf(msg, sizeof(msg), tr("Loaded slot %d"), app.settings.state_slot);
+                snprintf(msg, sizeof(msg), tr("Loaded slot %d"), app.settings.state_slot + TH_PS1 /* shelf v3: 1-20 */);
                 app.screen = SCREEN_GAME;
             }
             else
-                snprintf(msg, sizeof(msg), tr("Slot %d is empty"), app.settings.state_slot);
+                snprintf(msg, sizeof(msg), tr("Slot %d is empty"), app.settings.state_slot + TH_PS1 /* shelf v3: 1-20 */);
             app_toast(msg);
             sfx_play(SFX_SELECT);
             return;
@@ -395,6 +401,11 @@ void menu_screen(uint32_t pressed)
     }
 
     /* ------------------------------------------------ draw */
+    if (TH_PS1)
+    {
+        ps1_menu_draw(autos, auto_ages);
+        return;
+    }
     M.open_t = fminf(M.open_t + app.dt * 7.0f, 1.0f);
     float ease = 1.0f - (1.0f - M.open_t) * (1.0f - M.open_t);
     app_draw_game((uint8_t)(255 - 150 * ease));
@@ -573,6 +584,77 @@ void menu_screen(uint32_t pressed)
 
 /* ---------------------------------------------------------------- cheats */
 
+/* The PS1 theme's cheats: the memory card manager's list of flat slate rows with the console's ON / OFF plates,
+ * how many are on in CD Player spheres, the chosen cheat in full in the mono bar. */
+static void ps1_cheats_draw(const CheatList *cl)
+{
+    ps1_background(5);
+    ps1_title_plate(tr("Cheats"), 1824, 64);
+    char caps[256];
+    if (cl->count == 0)
+    {
+        ps1_monobar(96, 380, 1728, 92, tr("No cheats for this game"), NULL);
+        char where[SwanStationPS5_PATH_MAX + 64];
+        snprintf(where, sizeof(where), tr("Put .cht files in %s, or one next to the game."), app.paths.cheats);
+        text_draw_fit(136, 500, 24, FONT_REGULAR, PS1_SOFT, ALIGN_LEFT, 1648, where);
+        text_draw_fit(136, 540, 24, FONT_REGULAR, PS1_MUTED, ALIGN_LEFT, 1648,
+                      tr("tools/SwanStationPS5_sync.py cheats installs the libretro cheat library."));
+    }
+    else
+    {
+        const char *src = strrchr(cl->source, '/');
+        ps1_text_tracked(96, 82, 26, FONT_TECH, PS1_MUTED, ALIGN_LEFT, 0.1f,
+                         ps1_caps(src ? src + 1 : cl->source, caps, sizeof(caps)));
+        enum { ROWS = 8 };
+        const float x = 96, w = 1180, top = 170, row_h = 76;
+        static int top_row;
+        top_row = list_top_row(top_row, M.cheat_cursor, ROWS, cl->count);
+        float cur_x = 0, cur_y = 0;
+        int on = 0;
+        for (int i = 0; i < cl->count; ++i)
+            on += cl->items[i].enabled;
+        for (int i = top_row; i < cl->count && i < top_row + ROWS; ++i)
+        {
+            const Cheat *c = &cl->items[i];
+            const float y = top + (i - top_row) * row_h, h = row_h - 12;
+            const bool sel = i == M.cheat_cursor;
+            ps1_flat(x, y, w, h, "", 24, sel, false);
+            draw_switch(x + 20, y + (h - 34) * 0.5f, 34, c->enabled ? 1.0f : 0.0f);
+            float tag = 0;
+            if (c->patch)
+                tag = ps1_flat(x + w - 150, y + 12, 0, h - 24, tr("Patch"), 18, false, false) + 20;
+            text_draw_fit(x + 120, ps1_text_middle(y, h, 26), 26, FONT_BOLD, sel ? 0xffffffffu : PS1_SOFT, ALIGN_LEFT,
+                          w - 150 - tag, ps1_caps(c->desc, caps, sizeof(caps)));
+            if (sel)
+                cur_x = x + w - 16, cur_y = y + h - 10;
+        }
+        if (top_row > 0)
+            ps1_text_drop(x + w * 0.5f, top - 44, 26, FONT_BOLD, PS1_SOFT, ALIGN_CENTER, "\xc2\xab", 2);
+        if (top_row + ROWS < cl->count)
+            ps1_text_drop(x + w * 0.5f, top + ROWS * row_h - 4, 26, FONT_BOLD, PS1_SOFT, ALIGN_CENTER, "\xc2\xbb", 2);
+        /* how many are on, CD Player style: the number in a sphere, the total beside it */
+        char n[8], of[32];
+        snprintf(n, sizeof(n), "%d", on);
+        snprintf(of, sizeof(of), tr("of %d on"), cl->count);
+        ps1_ball(on ? PS1_BALL_RED : PS1_BALL_BLUE, 1530, 340, 180, n, 80, 0xffffffffu, false, 1.0f);
+        ps1_text_drop(1640, 400, 30, FONT_BOLD, PS1_SOFT, ALIGN_LEFT, ps1_caps(of, caps, sizeof(caps)), 3);
+        const Cheat *c = &cl->items[M.cheat_cursor];
+        char name[256];
+        const Game *gm = app.game;
+        if (gm && gm->serial[0])
+            snprintf(name, sizeof(name), "[%s] %s", gm->serial, c->desc);
+        else
+            snprintf(name, sizeof(name), "%s", c->desc);
+        ps1_monobar(96, 810, 1728, 92, name, c->enabled ? tr("On") : tr("Off"));
+        if (cur_x > 0)
+            ps1_cursor(cur_x, cur_y, 72);
+    }
+    static const int glyphs[] = {GLYPH_CROSS, GLYPH_SQUARE, GLYPH_TRIANGLE, GLYPH_R2, GLYPH_CIRCLE};
+    const char *labels[] = {tr("Toggle"), tr("All off"), tr("Find a code"), tr("Update cheats"), tr("Back")};
+    ps1_prompts(96, 946, glyphs, labels, 5, 27, false);
+    app_draw_toast();
+}
+
 void cheats_screen(uint32_t pressed)
 {
     CheatList *cl = &app.cheats;
@@ -630,9 +712,14 @@ void cheats_screen(uint32_t pressed)
         return;
     }
 
+    if (TH_PS1)
+    {
+        ps1_cheats_draw(cl);
+        return;
+    }
     app_draw_game(40);
     draw_rect(0, 0, plat_width(), plat_height(), TH_SCRIM);
-    text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Cheats"));
+    ps1_or_title(tr("Cheats"));
     const char *src = strrchr(cl->source, '/');
     if (cl->count)
         text_draw_fit(TH_MARGIN + 2, 100, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, 1400,
@@ -842,7 +929,7 @@ void achievements_screen(uint32_t pressed)
 
     app_draw_game(40);
     draw_rect(0, 0, plat_width(), plat_height(), TH_SCRIM);
-    text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Achievements"));
+    ps1_or_title(tr("Achievements"));
     int unlocked = 0, points = 0, total_points = 0;
     for (int i = 0; i < A.count; ++i)
     {

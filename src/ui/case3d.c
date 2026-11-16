@@ -8,6 +8,10 @@
  * The renderer only takes 2D triangles, so the model is turned and projected here; faces looking away are skipped and
  * the rest are sorted by depth inside each mesh. The textures are made by tools/make_case_textures.py.
  *
+ * A case turned in the hand (the PS1 theme's game page, case3d_extras_next) goes all the way round: its back and spines
+ * are the game's own (case3d_make_back: its back picture or a plain back, the title down both spines), and its tray is
+ * black.
+ *
  * Launching a game plays case3d_launch's animation on the chosen case: its lid swings open on the hinge, the CD (the
  * model's ntsc_disc meshes, the game's cover under its printed ring) spins on its tray.
  */
@@ -17,6 +21,7 @@
 #include "../platform/platform.h"
 
 #include "stb_image.h"
+#include "text.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -42,7 +47,7 @@ static const char *const part_names[PART_COUNT] = {"ntsc_case_back", "ntsc_case_
 static const char *const part_files[PART_COUNT] = {"psx_case_back.jpg", "psx_case_inner.jpg", NULL,
                                                    "psx_case_front.png", "psx_disc.png", NULL};
 static const uint32_t part_colors[PART_COUNT] = {0xff23232bu, 0xff0d0d11u, 0xff2a2a36u, 0xffa8b0b8u, 0xffd5d9e0u,
-                                                 0xffc9ccd2u};
+                                                 0xff18181cu};
 
 typedef struct
 {
@@ -79,6 +84,9 @@ static float view_distance = VIEW_DISTANCE_BASE;
 #define ART_Y1 27.05f
 #define FRONT_Z 1.886f /* the lid's front plane */
 #define SPINE_EDGE_X -26.63f /* where the lid's front plane begins: left of it is the ribbed strip */
+
+/* P1-14: what the next draw takes (case3d_extras_next), and what the draw under way uses */
+static Case3dExtras extras_next, extras;
 
 static PlatTexture *part_tex[PART_COUNT];
 static int tex_state[PART_COUNT]; /* 0 not tried, 1 made, -1 missing */
@@ -123,6 +131,79 @@ static PlatTexture *hinge_texture(void)
     stbi_image_free(rgba);
     hinge_state = hinge_tex ? 1 : -1;
     return hinge_tex;
+}
+
+/* A PAL PlayStation case's spine, the left strip of its front (P1-16b): not clear plastic over ridges but the opaque,
+ * matte charcoal plastic of the black tray's spine, a little bevelled, with "PlayStation" embossed along it near the
+ * foot, reading upwards (made here: no picture of anyone's logo in the app) */
+static PlatTexture *pal_spine_tex;
+static int pal_spine_state;
+
+static PlatTexture *pal_spine_texture(void)
+{
+    if (pal_spine_state)
+        return pal_spine_tex;
+    pal_spine_state = -1;
+    enum { W = 84, H = 960 };
+    uint8_t *px = malloc((size_t)W * H * 4);
+    if (!px)
+        return NULL;
+    uint32_t seed = 0x2545f491u;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+        {
+            seed = seed * 1664525u + 1013904223u;
+            int v = 56 + (int)((seed >> 24) % 5) - 2; /* the matte grain, fine */
+            if (x < 2)
+                v -= 10; /* the outer corner, rounding away */
+            else if (x >= W - 3)
+                v += 10; /* the edge where it meets the lid's window */
+            if (y < 4 || y >= H - 4)
+                v += 8; /* the lid's frosted rim runs over it */
+            uint8_t *p = &px[((size_t)y * W + x) * 4];
+            p[0] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v), p[1] = p[0], p[2] = (uint8_t)(p[0] + 4 > 255 ? 255 : p[0] + 4);
+            p[3] = 255;
+        }
+    /* the wordmark, as on the real spine: regular weight, its letters about two fifths of the strip's width, along the
+     * middle of the strip (from about 36% to 64% of its height), reading upwards; moulded in, so a little lighter
+     * than the plastic, with the faintest edge */
+    const int len = H * 32 / 100, thick = W * 80 / 100;
+    float size = thick * 0.9f;
+    while (size > 8.0f && text_width(size, FONT_REGULAR, "PlayStation") > len)
+        size -= 1.0f;
+    uint8_t *t = calloc((size_t)len * thick, 4);
+    uint8_t *mask = calloc((size_t)W * H, 1);
+    if (t && mask)
+    {
+        text_render_rgba(t, len, thick, (int)((thick - size * 1.05f) * 0.5f), size, FONT_REGULAR, 0xffffffffu, len * 4,
+                         "PlayStation");
+        const int x0 = (W - thick) / 2, y0 = H / 2 - len / 2;
+        for (int ty = 0; ty < thick; ++ty)
+            for (int l = 0; l < len; ++l)
+            {
+                const int a = t[((size_t)ty * len + l) * 4];
+                const int ax = x0 + ty, ay = y0 + (len - 1 - l);
+                if (a && ax >= 0 && ay >= 0 && ax < W && ay < H)
+                    mask[(size_t)ay * W + ax] = (uint8_t)a;
+            }
+        for (int y = 1; y < H - 1; ++y)
+            for (int x = 1; x < W - 1; ++x)
+            {
+                const int m = mask[(size_t)y * W + x];
+                const int d = (m * 30 + (mask[(size_t)(y + 1) * W + x + 1] - mask[(size_t)(y - 1) * W + x - 1]) * 8) / 255;
+                if (!d)
+                    continue;
+                uint8_t *p = &px[((size_t)y * W + x) * 4];
+                for (int c = 0; c < 3; ++c)
+                    p[c] = (uint8_t)(p[c] + d < 0 ? 0 : p[c] + d > 255 ? 255 : p[c] + d);
+            }
+    }
+    free(t);
+    free(mask);
+    pal_spine_tex = plat_texture_create_mips(px, W, H);
+    free(px);
+    pal_spine_state = pal_spine_tex ? 1 : -1;
+    return pal_spine_tex;
 }
 
 /* the lid's paper seen from behind, with the lid open: black with the app's name (assets/psx_case_lidback.png) */
@@ -360,9 +441,14 @@ float case3d_max_yaw(void)
 
 /* the turn of the case being drawn: yaw about the vertical axis, then pitch about the horizontal one */
 static float turn_c, turn_s, tilt_c, tilt_s;
+/* the case's thickness: the model's is a standard CD case's (10.4 of 142 mm); a PAL PlayStation case (black tray) is
+ * a good deal thicker, 17.4 mm, and is drawn so */
+#define PAL_THICKNESS 2.04f /* 17.4 of 142.6 mm (PAL PS1 cases, PSXPalDB and the UK maker's measures) */
+static float z_scale = 1.0f;
 
 static void turn_point(float x, float y, float z, float *ox, float *oy, float *oz)
 {
+    z *= z_scale;
     const float x1 = x * turn_c + z * turn_s, z1 = -x * turn_s + z * turn_c;
     *ox = x1;
     *oy = y * tilt_c + z1 * tilt_s;
@@ -451,7 +537,7 @@ static void draw_part(int part, const Pt *pts, PlatTexture *cover, uint32_t tint
 {
     static const float light[3] = {-0.36f, 0.50f, 0.79f};
     const float flip = mirror ? -1.0f : 1.0f; /* turning over the table reverses the winding */
-    PlatTexture *tex = part == PART_PROMO ? cover : part_texture(part);
+    PlatTexture *tex = part == PART_PROMO ? cover : part == PART_BACK && extras.back ? extras.back : part_texture(part);
     const Mesh *m = &meshes[part];
     const bool show_inside = launch_on && launch_open > 0.01f; /* the lid is open: the inside of the case shows */
     enum { MAX_FACES = 128 };
@@ -529,7 +615,11 @@ static void draw_part(int part, const Pt *pts, PlatTexture *cover, uint32_t tint
     {
         const Face *f = &m->faces[order[i]];
         /* the pictures carry their own light: a little shading keeps the case's volume */
-        const float k = lighting_on || part != PART_PROMO ? 0.62f + 0.38f * shade[i] : 1.0f;
+        float k = lighting_on || part != PART_PROMO ? 0.62f + 0.38f * shade[i] : 1.0f;
+        if (part == PART_INNER && extras.black_tray)
+            k *= 0.34f; /* a PAL case's black tray */
+        else if ((part == PART_FRONT || part == PART_BACK) && extras.black_tray)
+            k *= 0.70f; /* its clear rims read as a flat, slightly glossy box at TV distance, not as glass */
         uint32_t rgb = shade_color(k, tex ? 0xffffffu : base);
         rgb = (uint32_t)(((rgb >> 16) & 0xff) * tr) << 16 | (uint32_t)(((rgb >> 8) & 0xff) * tg) << 8 |
               (uint32_t)((rgb & 0xff) * tb);
@@ -681,7 +771,11 @@ static void draw_sheet(const Sheet *sh, float cx, float cy, float scale, float a
         lid_vector(sh->ev[0], sh->ev[1], sh->ev[2], &v0[0], &v0[1], &v0[2]);
     }
     turn_point(c0[0], c0[1], c0[2], &c3[0], &c3[1], &c3[2]);
-    turn_point(n0[0], n0[1], n0[2], &n3[0], &n3[1], &n3[2]);
+    turn_point(n0[0], n0[1], n0[2] / (z_scale * z_scale), &n3[0], &n3[1], &n3[2]); /* a normal: z the other way */
+    {
+        const float nl = sqrtf(n3[0] * n3[0] + n3[1] * n3[1] + n3[2] * n3[2]);
+        n3[0] /= nl, n3[1] /= nl, n3[2] /= nl;
+    }
     turn_point(u0[0], u0[1], u0[2], &u3[0], &u3[1], &u3[2]);
     turn_point(v0[0], v0[1], v0[2], &v3[0], &v3[1], &v3[2]);
     /* looking away from the camera */
@@ -743,10 +837,113 @@ static void draw_sheet(const Sheet *sh, float cx, float cy, float scale, float a
 
 /* The shine over the lid's clear plastic: the long horizontal streak. The sides are left as the example textures have
  * them. */
+/* The PAL case's authenticity hologram (P1-16d): a small silver sticker with rounded corners on the lid at the bottom
+ * left, over the cover's black band, left of its wordmark; "OFFICIAL LICENSED PRODUCT" in rows across it and an emblem
+ * in the middle (ours is an abstract one: no one's logo). Its rainbow moves as the case turns. */
+static PlatTexture *holo_tex;
+static int holo_state;
+
+static PlatTexture *holo_texture(void)
+{
+    if (holo_state)
+        return holo_tex;
+    holo_state = -1;
+    enum { W = 160, H = 128 };
+    uint8_t *px = calloc((size_t)W * H, 4);
+    if (!px)
+        return NULL;
+    for (int i = 0; i < W * H; ++i)
+        px[i * 4] = 196, px[i * 4 + 1] = 200, px[i * 4 + 2] = 208, px[i * 4 + 3] = 255;
+    /* the rows of small print, each a little offset */
+    for (int row = 0; row < 9; ++row)
+    {
+        uint8_t line[W * 16 * 4];
+        for (int i = 0; i < W * 16; ++i)
+            line[i * 4] = 196, line[i * 4 + 1] = 200, line[i * 4 + 2] = 208, line[i * 4 + 3] = 255;
+        text_render_rgba(line, W, 16, 1, 14, FONT_BOLD, 0xff8c909cu, W * 4,
+                         row % 2 ? "LICENSED PRODUCT OFFICIAL" : "OFFICIAL LICENSED PRODUCT");
+        const int y0 = row * 14 - 2, shift = (row * 23) % 40;
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < W; ++x)
+            {
+                const int ty = y0 + y - x / 12; /* the rows run a little uphill */
+                if (ty < 0 || ty >= H)
+                    continue;
+                const uint8_t *q = &line[(y * W + (x + shift) % W) * 4];
+                uint8_t *p = &px[(ty * W + x) * 4];
+                if (q[0] < p[0])
+                    p[0] = q[0], p[1] = q[1], p[2] = q[2];
+            }
+    }
+    /* the emblem: a soft ring in the middle, brighter foil */
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+        {
+            const float dx = (x - W * 0.5f) / (H * 0.30f), dy = (y - H * 0.5f) / (H * 0.30f), d = sqrtf(dx * dx + dy * dy);
+            uint8_t *p = &px[(y * W + x) * 4];
+            if (d < 1.0f)
+            {
+                const int v = d > 0.72f ? 250 : 222;
+                p[0] = (uint8_t)v, p[1] = (uint8_t)v, p[2] = (uint8_t)(v > 245 ? 255 : v + 8);
+            }
+        }
+    /* rounded corners */
+    const float r = 14.0f;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+        {
+            const float cx = x < r ? r : x > W - 1 - r ? W - 1 - r : (float)x, cy = y < r ? r : y > H - 1 - r ? H - 1 - r : (float)y;
+            const float d = sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy));
+            if (d > r)
+                px[(y * W + x) * 4 + 3] = 0;
+            else if (d > r - 1.0f)
+                px[(y * W + x) * 4 + 3] = (uint8_t)(255.0f * (r - d));
+        }
+    holo_tex = plat_texture_create_mips(px, W, H);
+    free(px);
+    holo_state = holo_tex ? 1 : -1;
+    return holo_tex;
+}
+
+static uint32_t holo_hue(float h)
+{
+    h -= floorf(h);
+    const float r = 0.5f + 0.5f * cosf(6.2831853f * h), g = 0.5f + 0.5f * cosf(6.2831853f * (h - 0.333f)),
+                b = 0.5f + 0.5f * cosf(6.2831853f * (h - 0.667f));
+    return (uint32_t)(110 + 145 * r) << 16 | (uint32_t)(110 + 145 * g) << 8 | (uint32_t)(110 + 145 * b);
+}
+
+static void draw_holo(float cx, float cy, float scale, float alpha)
+{
+    PlatTexture *t = holo_texture();
+    float nx, ny, nz;
+    turn_point(0.0f, 0.0f, 1.0f, &nx, &ny, &nz);
+    if (!t || nz <= 0.0f)
+        return;
+    /* on the lid, bottom left of the window: about 14% of the case wide, its foot just above the window's */
+    const float x0 = ART_X0 + 0.9f, x1 = x0 + case_w * 0.14f, y0 = ART_Y0 + 1.3f, y1 = y0 + case_w * 0.14f * 0.8f;
+    const float z = FRONT_Z + 0.015f;
+    const float corner[4][2] = {{x0, y1}, {x1, y1}, {x1, y0}, {x0, y0}};
+    const float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    /* the foil's colours: a hue across it that slides as the case turns */
+    const float turn = atan2f(turn_s, turn_c) * 0.9f + atan2f(tilt_s, tilt_c) * 0.7f;
+    PlatVertex q[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        float px, py, pz;
+        turn_point(corner[i][0], corner[i][1], z, &px, &py, &pz);
+        const float persp = VIEW_DISTANCE / (VIEW_DISTANCE - pz);
+        q[i] = (PlatVertex){cx + px * scale * persp, cy - py * scale * persp, uv[i][0], uv[i][1],
+                            (uint32_t)(255.0f * alpha) << 24 | holo_hue(turn + i * 0.17f)};
+    }
+    const PlatVertex tri[6] = {q[0], q[1], q[2], q[0], q[2], q[3]};
+    plat_draw_mesh(t, tri, 6, NULL, 0);
+}
+
 static void draw_plastic(float cx, float cy, float scale, float alpha, bool strip_pass, bool shine_pass)
 {
     /* the lid's front runs over the ribbed strip too, flush with it (the model's front plane starts right of it) */
-    PlatTexture *strip = hinge_texture();
+    PlatTexture *strip = extras.black_tray ? pal_spine_texture() : hinge_texture();
     float nx, ny, nz;
     turn_point(0.0f, 0.0f, 1.0f, &nx, &ny, &nz);
     if (strip_pass && strip && nz > 0.0f)
@@ -769,7 +966,7 @@ static void draw_plastic(float cx, float cy, float scale, float alpha, bool stri
 
     /* the shine of the light point over the lid */
     const Sheet lid = {{0, 0, FRONT_Z + 0.02f}, {case_w * 0.5f, 0, 0}, {0, case_h * 0.5f, 0}, {0, 0, 1},
-                       0.90f, 0.24f, 0.08f, 0.0f, true};
+                       0.90f, 0.24f, extras.black_tray ? 0.04f : 0.08f, 0.0f, true};
     if (shine_pass && lighting_on)
         draw_sheet(&lid, cx, cy, scale, alpha);
 }
@@ -1009,11 +1206,17 @@ void case3d_launch(float open, float spin, bool in_tray)
 void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, float pitch, uint32_t tint,
                  bool reflection)
 {
+    extras = extras_next;
+    memset(&extras_next, 0, sizeof(extras_next));
+    z_scale = extras.black_tray ? PAL_THICKNESS : 1.0f;
     if (!case3d_available() || ((tint >> 24) & 0xff) == 0)
         return;
     /* whatever turns the case (the stick, a knock, the shelf), its back never shows: it shows from 90 degrees on, so it
-     * stops at case3d_max_yaw (80), at any tilt */
-    yaw = fmaxf(fminf(yaw, case3d_max_yaw()), -case3d_max_yaw());
+     * stops at case3d_max_yaw (80), at any tilt. A case turned in the hand (extras.free_turn) goes all the way round. */
+    if (extras.free_turn)
+        yaw = remainderf(yaw, 6.2831853f);
+    else
+        yaw = fmaxf(fminf(yaw, case3d_max_yaw()), -case3d_max_yaw());
     pitch = fmaxf(fminf(pitch, case3d_max_pitch()), -case3d_max_pitch());
     const float scale = h / case_h, c = cosf(yaw), s = sinf(yaw);
     /* the case must not come nearer as it opens (its lid swings towards the viewer): its perspective flattens out as it
@@ -1103,6 +1306,17 @@ void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, flo
         if (floor_shadow_strength > 0.0f)
             draw_contact_shadow(c, s, cx, cy, scale, alpha * floor_shadow_strength);
     }
+    if (!launch_on && c * tilt_c < 0.0f)
+    {
+        /* turned round: the back is the near side, so the lid and the cover go first and the back over them */
+        draw_part(PART_FRONT, pts, cover, tint, NULL);
+        draw_part(PART_PROMO, pts, cover, tint, NULL);
+        draw_part(PART_INNER, pts, cover, tint, NULL);
+        draw_part(PART_BACK, pts, cover, tint, NULL);
+        draw_plastic(cx, cy, scale, alpha, true, true);
+        view_distance = VIEW_DISTANCE_BASE;
+        return;
+    }
     draw_part(PART_BACK, pts, cover, tint, NULL);
     draw_part(PART_INNER, pts, cover, tint, NULL);
     /* the CD sits on the tray, behind the lid; once it lifts it is over the ribbed strip at the case's left */
@@ -1115,8 +1329,208 @@ void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, flo
     draw_part(PART_FRONT, pts, cover, tint, NULL);
     if (disc_last)
         draw_disc(pts, cover, tint, cx, cy, scale);
+    if (extras.black_tray && !launch_on)
+        draw_holo(cx, cy, scale, alpha); /* under the lid's sheen */
     draw_plastic(cx, cy, scale, alpha, !strip_first, true);
     launch_on = false;
     launch_open = launch_spin = 0.0f;
     view_distance = VIEW_DISTANCE_BASE;
+}
+
+void case3d_extras_next(const Case3dExtras *e)
+{
+    if (e)
+        extras_next = *e;
+    else
+        memset(&extras_next, 0, sizeof(extras_next));
+}
+
+/* ---------------------------------------------------------------- P1-14: a game's back insert and spines */
+
+/* Where things are in psx_case_back.jpg, as fractions of its 1280x754: the back insert's picture, and the two black
+ * spine cards (the case's left and right edges) */
+#define BACK_X0 (152.0f / 1280.0f)
+#define BACK_X1 (1090.0f / 1280.0f)
+#define BACK_Y0 (14.0f / 754.0f)
+#define BACK_Y1 (740.0f / 754.0f)
+static const float spine_cards[2][2] = {{1099.0f / 1280.0f, 1146.0f / 1280.0f}, {1165.0f / 1280.0f, 1270.0f / 1280.0f}};
+#define SPINE_Y0 (16.0f / 754.0f)
+#define SPINE_Y1 (740.0f / 754.0f)
+
+static void fill_rect(uint8_t *px, int w, int h, int x0, int y0, int x1, int y1, uint32_t rgb)
+{
+    for (int y = y0 < 0 ? 0 : y0; y < y1 && y < h; ++y)
+        for (int x = x0 < 0 ? 0 : x0; x < x1 && x < w; ++x)
+        {
+            uint8_t *p = &px[((size_t)y * w + x) * 4];
+            p[0] = (uint8_t)(rgb >> 16), p[1] = (uint8_t)(rgb >> 8), p[2] = (uint8_t)rgb, p[3] = 255;
+        }
+}
+
+/* A picture cut to fill the box without stretching (centred, the overflow cut off), box-filtered down */
+static void blit_fill(uint8_t *px, int w, int h, int x0, int y0, int x1, int y1, const uint8_t *src, int sw, int sh)
+{
+    x1 = x1 > w ? w : x1, y1 = y1 > h ? h : y1;
+    const int bw = x1 - x0, bh = y1 - y0;
+    if (bw <= 0 || bh <= 0 || x0 < 0 || y0 < 0)
+        return;
+    const float fit = fmaxf((float)bw / sw, (float)bh / sh);
+    const float ox = (sw - bw / fit) * 0.5f, oy = (sh - bh / fit) * 0.5f, step = 1.0f / fit;
+    for (int y = 0; y < bh; ++y)
+        for (int x = 0; x < bw; ++x)
+        {
+            const int sx0 = (int)(ox + x * step), sy0 = (int)(oy + y * step);
+            const int sx1 = (int)(ox + (x + 1) * step), sy1 = (int)(oy + (y + 1) * step);
+            unsigned r = 0, g = 0, b = 0, n = 0;
+            for (int yy = sy0; yy <= sy1 && yy < sh; yy += 1 + (sy1 - sy0) / 3)
+                for (int xx = sx0; xx <= sx1 && xx < sw; xx += 1 + (sx1 - sx0) / 3)
+                {
+                    const uint8_t *q = &src[((size_t)yy * sw + xx) * 4];
+                    r += q[0], g += q[1], b += q[2], ++n;
+                }
+            if (!n)
+                continue;
+            uint8_t *p = &px[((size_t)(y0 + y) * w + x0 + x) * 4];
+            p[0] = (uint8_t)(r / n), p[1] = (uint8_t)(g / n), p[2] = (uint8_t)(b / n), p[3] = 255;
+        }
+}
+
+/* One line of text, white on black, `size` tall, in a len x thick strip, turned a quarter clockwise into the atlas at
+ * (x0, y0) (it reads from the top down, as the model's own spine did) */
+static void spine_text(uint8_t *px, int w, int h, int x0, int y0, int len, int thick, float size, int weight,
+                       uint32_t argb, const char *s)
+{
+    if (len <= 0 || thick <= 0)
+        return;
+    uint8_t *tmp = calloc((size_t)len * thick, 4);
+    if (!tmp)
+        return;
+    while (size > 8.0f && text_width(size, weight, s) > len)
+        size -= 1.0f;
+    text_render_rgba(tmp, len, thick, (int)((thick - size * 1.2f) * 0.5f), size, weight, argb, len * 4, s);
+    for (int ty = 0; ty < thick; ++ty)
+        for (int tx = 0; tx < len; ++tx)
+        {
+            const int ax = x0 + (thick - 1 - ty), ay = y0 + tx;
+            if (ax < 0 || ay < 0 || ax >= w || ay >= h)
+                continue;
+            const uint8_t *q = &tmp[((size_t)ty * len + tx) * 4];
+            uint8_t *p = &px[((size_t)ay * w + ax) * 4];
+            /* the text was drawn on black: lighten only */
+            for (int k = 0; k < 3; ++k)
+                p[k] = q[k] > p[k] ? q[k] : p[k];
+        }
+    free(tmp);
+}
+
+/* The four-colour strip at the top of a spine (drawn here: no one's logo) */
+static void spine_badge(uint8_t *px, int w, int h, int x0, int y0, int side)
+{
+    fill_rect(px, w, h, x0, y0, x0 + side, y0 + side, 0xf0f0f0);
+    const int m = side / 8, q = (side - 3 * m) / 2;
+    static const uint32_t C[4] = {0xe03a3e, 0xf2c230, 0x2fb36b, 0x3a6fe0};
+    for (int i = 0; i < 4; ++i)
+    {
+        const int bx = x0 + m + (i % 2) * (q + m), by = y0 + m + (i / 2) * (q + m);
+        fill_rect(px, w, h, bx, by, bx + q, by + q, C[i]);
+    }
+}
+
+PlatTexture *case3d_make_back(const char *title, const char *serial, const char *region, const char *back_path)
+{
+    char path[512];
+    plat_asset_path(path, sizeof(path), part_files[PART_BACK]);
+    int w = 0, h = 0, comp = 0;
+    uint8_t *px = stbi_load(path, &w, &h, &comp, 4);
+    if (!px)
+        return NULL;
+    const int ax0 = (int)(BACK_X0 * w), ax1 = (int)(BACK_X1 * w), ay0 = (int)(BACK_Y0 * h), ay1 = (int)(BACK_Y1 * h);
+    int bw = 0, bh = 0;
+    uint8_t *back = back_path && back_path[0] ? stbi_load(back_path, &bw, &bh, &comp, 4) : NULL;
+    if (back && bw >= 16 && bh >= 16)
+        blit_fill(px, w, h, ax0, ay0, ax1, ay1, back, bw, bh);
+    else
+    {
+        /* a plain back: black, the title at the top, the region and serial at the foot, the strip in the corner */
+        fill_rect(px, w, h, ax0, ay0, ax1, ay1, 0x0b0b0e);
+        const int bwid = ax1 - ax0, bht = ay1 - ay0;
+        uint8_t *tmp = calloc((size_t)bwid * bht, 4);
+        if (tmp)
+        {
+            for (size_t i = 0; i < (size_t)bwid * bht; ++i)
+                tmp[i * 4] = tmp[i * 4 + 1] = tmp[i * 4 + 2] = 0x0b, tmp[i * 4 + 3] = 255;
+            float size = bht * 0.075f;
+            text_render_rgba(tmp, bwid, bht, (int)(bht * 0.08f), size, FONT_BOLD, 0xffffffffu, (int)(bwid * 0.84f),
+                             title ? title : "");
+            char foot[64];
+            snprintf(foot, sizeof(foot), "%s%s%s", region && region[0] ? region : "", region && region[0] ? "   " : "",
+                     serial ? serial : "");
+            text_render_rgba(tmp, bwid, bht, (int)(bht * 0.86f), bht * 0.04f, FONT_REGULAR, 0xffa0a0a8u, bwid, foot);
+            for (int y = 0; y < bht; ++y)
+                memcpy(&px[((size_t)(ay0 + y) * w + ax0) * 4], &tmp[(size_t)y * bwid * 4], (size_t)bwid * 4);
+            free(tmp);
+        }
+        const int side = (int)(bht * 0.08f);
+        spine_badge(px, w, h, ax1 - side - (int)(bht * 0.05f), ay1 - side - (int)(bht * 0.05f), side);
+    }
+    if (back)
+        stbi_image_free(back);
+    /* the spines: black cards, the strip at the top, the title down the middle, the serial at the foot */
+    const int sy0 = (int)(SPINE_Y0 * h), sy1 = (int)(SPINE_Y1 * h);
+    for (int c = 0; c < 2; ++c)
+    {
+        const int cx0 = (int)(spine_cards[c][0] * w), cx1 = (int)(spine_cards[c][1] * w), cw = cx1 - cx0;
+        fill_rect(px, w, h, cx0, sy0, cx1, sy1, 0x060607);
+        const int bs = cw * 3 / 4 < 60 ? cw * 3 / 4 : 60;
+        spine_badge(px, w, h, cx0 + (cw - bs) / 2, sy0 + 10, bs);
+        const int top = sy0 + 10 + bs + 16, foot = (int)((sy1 - sy0) * 0.17f);
+        const int thick = cw < 70 ? cw : 70, tx0 = cx0 + (cw - thick) / 2;
+        spine_text(px, w, h, tx0, top, sy1 - foot - top - 10, thick, thick * 0.62f, FONT_BOLD, 0xffffffffu,
+                   title ? title : "");
+        spine_text(px, w, h, tx0, sy1 - foot, foot - 6, thick, thick * 0.4f, FONT_REGULAR, 0xffc8c8d0u,
+                   serial ? serial : "");
+    }
+    PlatTexture *t = plat_texture_create_mips(px, w, h);
+    stbi_image_free(px);
+    return t;
+}
+
+int case3d_outline(float cx, float cy, float h, float yaw, float pitch, bool pal, float *xy)
+{
+    if (!case3d_available())
+        return 0;
+    const float scale = h / case_h, zs = pal ? PAL_THICKNESS : 1.0f;
+    const float c = cosf(yaw), s = sinf(yaw), tc = cosf(pitch), ts = sinf(pitch);
+    float p[8][2];
+    for (int i = 0; i < 8; ++i)
+    {
+        const float x = (i & 1 ? 0.5f : -0.5f) * case_w, y = (i & 2 ? 0.5f : -0.5f) * case_h + case_floor + case_h * 0.5f,
+                    z = (i & 4 ? 0.5f : -0.5f) * case_d * zs;
+        const float x1 = x * c + z * s, z1 = -x * s + z * c;
+        const float y2 = y * tc + z1 * ts, z2 = -y * ts + z1 * tc;
+        const float persp = VIEW_DISTANCE_BASE / (VIEW_DISTANCE_BASE - z2);
+        p[i][0] = cx + x1 * scale * persp;
+        p[i][1] = cy - y2 * scale * persp;
+    }
+    /* the convex hull (gift wrapping: eight points) */
+    int start = 0, n = 0;
+    for (int i = 1; i < 8; ++i)
+        if (p[i][0] < p[start][0] || (p[i][0] == p[start][0] && p[i][1] < p[start][1]))
+            start = i;
+    int cur = start;
+    do
+    {
+        xy[n * 2] = p[cur][0], xy[n * 2 + 1] = p[cur][1];
+        if (++n >= 8)
+            break;
+        int next = (cur + 1) % 8;
+        for (int i = 0; i < 8; ++i)
+        {
+            const float cr = (p[next][0] - p[cur][0]) * (p[i][1] - p[cur][1]) - (p[next][1] - p[cur][1]) * (p[i][0] - p[cur][0]);
+            if (cr < 0.0f)
+                next = i;
+        }
+        cur = next;
+    } while (cur != start);
+    return n;
 }

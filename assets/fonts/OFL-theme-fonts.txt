@@ -8,6 +8,15 @@ Fraunces (Fraunces-600.ttf):
   Copyright 2020 The Fraunces Project Authors (github.com/undercasetype/Fraunces)
 Work Sans (WorkSans-400.ttf):
   Copyright 2019 The Work Sans Project Authors (https://github.com/weiweihuanghuang/Work-Sans)
+M PLUS Rounded 1c (MPLUSRounded1c-ExtraBold-latin.ttf, MPLUSRounded1c-Medium-latin.ttf), the PS1 theme:
+  Copyright 2016 The Rounded M+ Project Authors. Subset to Latin-1 and a few symbols (pyftsubset); M PLUS has
+  no Reserved Font Name.
+Asap (Asap-Black.ttf), the PS1 shelf v3 lettering:
+  Copyright 2018 The Asap Project Authors (https://github.com/Omnibus-Type/Asap). Static Black instance
+  (wght 900, wdth 100) made from the variable font with fontTools' instancer.
+Share Tech Mono (ShareTechMono-400.ttf), the PS1 theme:
+  Copyright (c) 2012, Carrois Type Design, Ralph du Carrois (post@carrois.com www.carrois.com), with Reserved
+  Font Name 'Share'. Unmodified.
 
 Static instances as served by Google Fonts. The license follows.
 

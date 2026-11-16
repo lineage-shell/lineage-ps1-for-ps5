@@ -144,7 +144,10 @@ static bool init_ps5_screen(void)
     /* a bigger output is for the GPU interface, which draws at any size (the CPU canvas would only be stretched) */
     static const int OUTPUT_W[] = {1920, 2560, 3840}, OUTPUT_H[] = {1080, 1440, 2160};
     const int output = output_wanted > 0 && output_wanted < 3 ? output_wanted : 0;
-    vkp_want_size(OUTPUT_W[output], OUTPUT_H[output]);
+    if (output_wanted < 0)
+        vkp_want_size(-1, -1); /* shelf v3: the display's own resolution */
+    else
+        vkp_want_size(OUTPUT_W[output], OUTPUT_H[output]);
     use_vulkan = vkp_open(PS5_SCREEN_W, PS5_SCREEN_H, error, sizeof(error));
     if (use_vulkan)
     {
@@ -285,16 +288,19 @@ bool plat_init(void)
  * off-screen surface, a fixed 60 Hz clock, scripted buttons and screenshots. */
 static SDL_Surface *preview_surface;
 static uint64_t preview_clock;
+static int preview_rx; /* "rstick X": the right stick's x (-32767..32767), held until changed */
 static FILE *preview_script;
 static uint32_t preview_buttons;
 static int preview_hold;
 static bool preview_quit, preview_release;
+#include "../../tools/ui-preview/laptop/live.inc" /* SwanStationPS5_WINDOW=1: a real window, keys, sound */
+#include "../../tools/ui-preview/laptop/record.inc" /* SwanStationPS5_RECORD=dir: video and sound to files */
 
 static void preview_step(void)
 {
     /* script lines: "wait N", "press BUTTONS [N]", "hold BUTTONS N", "shot NAME", "quit"
      * BUTTONS: names joined by + (cross circle square triangle up down left right
-     * l1 r1 l2 r2 l3 r3 start select menu) */
+     * l1 r1 l2 r2 l3 r3 start select menu); "rstick X" holds the right stick at X (-32767..32767) */
     static const struct { const char *name; int bit; } names[] = {
         {"cross", BTN_CROSS}, {"circle", BTN_CIRCLE}, {"square", BTN_SQUARE},
         {"triangle", BTN_TRIANGLE}, {"up", BTN_UP}, {"down", BTN_DOWN}, {"left", BTN_LEFT},
@@ -325,6 +331,11 @@ static void preview_step(void)
         {
             preview_quit = true;
             return;
+        }
+        if (!strcmp(cmd, "rstick"))
+        {
+            preview_rx = atoi(arg);
+            continue;
         }
         if (!strcmp(cmd, "wait"))
         {
@@ -367,6 +378,7 @@ static bool init_preview_screen(void)
         return init_failed("preview renderer");
     const char *script = SDL_getenv("SwanStationPS5_SCRIPT");
     preview_script = script ? fopen(script, "r") : NULL;
+    live_init();
     return true;
 }
 #endif
@@ -411,6 +423,9 @@ void plat_release(void)
 
 void plat_shutdown(void)
 {
+#if defined(SwanStationPS5_PREVIEW)
+    rec_finish(); /* the recording, before SDL goes */
+#endif
     plat_audio_close();
 #if defined(SS5_CANVAS) && !defined(__PROSPERO__)
     if (use_vulkan)
@@ -988,6 +1003,9 @@ void plat_poll(PadState pads[SwanStationPS5_MAX_PADS], bool *quit)
             *quit = true;
         if (event.type == SDL_CONTROLLERDEVICEADDED || event.type == SDL_CONTROLLERDEVICEREMOVED)
             devices_changed = true;
+#if defined(SwanStationPS5_PREVIEW)
+        live_event(&event);
+#endif
 #if !defined(__PROSPERO__) && !defined(SwanStationPS5_PREVIEW)
         /* F11: borderless full screen (the desktop's own size) and back; the cursor is hidden while it lasts */
         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F11 && !event.key.repeat && window)
@@ -1039,17 +1057,27 @@ void plat_poll(PadState pads[SwanStationPS5_MAX_PADS], bool *quit)
         p->l2 = (uint8_t)(SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) >> 7);
         p->r2 = (uint8_t)(SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) >> 7);
     }
+#if defined(SwanStationPS5_PREVIEW)
+    if (preview_rx) /* a script's "rstick" */
+        pads[0].rx = (int16_t)preview_rx;
+#endif
     order_pads(pads);
 
 #if defined(SwanStationPS5_PREVIEW)
     preview_step();
     pads[0].connected = true;
-    pads[0].buttons = preview_buttons;
+    if (live_on)
+        pads[0].buttons |= preview_buttons, live_read_keys(&pads[0]); /* the laptop preview's own key map */
+    else
+        pads[0].buttons = preview_buttons;
     if (preview_quit && quit)
         *quit = true;
 #endif
 #if !defined(__PROSPERO__)
     const Uint8 *keys = SDL_GetKeyboardState(NULL);
+#if defined(SwanStationPS5_PREVIEW)
+    if (!live_on)
+#endif
     for (size_t k = 0; k < sizeof(key_map) / sizeof(key_map[0]); ++k)
         if (keys[key_map[k].key])
         {
@@ -1116,6 +1144,13 @@ void plat_rumble(int port, uint16_t strong, uint16_t weak)
 
 bool plat_audio_open(int sample_rate)
 {
+#if defined(SwanStationPS5_PREVIEW)
+    if (rec_on())
+    {
+        rec_audio_rate(sample_rate);
+        return true;
+    }
+#endif
     if (audio_device && audio_rate == sample_rate)
     {
         SDL_ClearQueuedAudio(audio_device);
@@ -1158,6 +1193,13 @@ void plat_audio_set_ratio(double ratio)
 
 void plat_audio_push(const int16_t *frames, size_t frame_count)
 {
+#if defined(SwanStationPS5_PREVIEW)
+    if (rec_on())
+    {
+        rec_audio_push(frames, frame_count);
+        return;
+    }
+#endif
     if (!audio_device || !frame_count)
         return;
     if (audio_ratio > 0.9999 && audio_ratio < 1.0001)
@@ -1204,11 +1246,22 @@ void plat_audio_push(const int16_t *frames, size_t frame_count)
 
 size_t plat_audio_queued_frames(void)
 {
+#if defined(SwanStationPS5_PREVIEW)
+    if (rec_on())
+        return rec_audio_queued();
+#endif
     return audio_device ? SDL_GetQueuedAudioSize(audio_device) / 4 : 0;
 }
 
 void plat_audio_clear(void)
 {
+#if defined(SwanStationPS5_PREVIEW)
+    if (rec_on())
+    {
+        rec_audio_clear();
+        return;
+    }
+#endif
     if (audio_device)
         SDL_ClearQueuedAudio(audio_device);
 }
@@ -1440,6 +1493,13 @@ float plat_ui_scale(void)
         SwanStationPS5_log("screen: interface drawn at %.2fx 1080p (drawable %dx%d)", k, w, h);
     }
     return k;
+#elif defined(__PROSPERO__) && defined(SwanStationPS5_VULKAN)
+    /* shelf v3: with the GPU interface the glyphs are made at the display's own pixels (1440p, 4K), not 1080p stretched */
+    if (!gpu_ui)
+        return 1.0f;
+    int w = 0, h = 0;
+    vkp_output_size(&w, &h);
+    return h >= 1080 ? h / 1080.0f : 1.0f;
 #else
     return 1.0f;
 #endif
@@ -2179,6 +2239,8 @@ void plat_end_frame(void)
         SDL_RenderPresent(renderer);
 #if defined(SwanStationPS5_PREVIEW)
     preview_clock += 16667;
+    live_present(preview_surface);
+    rec_frame(preview_surface);
 #endif
 #if defined(SS5_CANVAS)
     static uint64_t frame_start, draw_us, present_us;
@@ -2364,6 +2426,8 @@ void plat_draw_mesh(PlatTexture *texture, const PlatVertex *v, int count, const 
             out[i].color.b = p->argb & 0xff;
             out[i].color.a = p->argb >> 24;
         }
+        if (!texture) /* untextured triangles take the renderer's draw blend mode: their colours' alpha must blend */
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RenderGeometry(renderer, texture ? texture_sdl(texture) : NULL, out, n, indices,
                            indices ? index_count : 0);
         done += n;
@@ -2465,8 +2529,8 @@ void plat_asset_path(char *out, size_t size, const char *relative)
     /* /app0 exists only inside the sandbox. Once the HEN frees SwanStationPS5 its
      * file system is the console's real one, where the title is mounted at
      * /system_ex/app/<id> (ShadowMountPlus) and stored in /data/homebrew/<id>. */
-    static const char *const bases[] = {"/app0/assets", "/system_ex/app/PPSA98510/assets",
-                                        "/data/homebrew/PPSA98510/assets"};
+    static const char *const bases[] = {"/app0/assets", "/system_ex/app/" SwanStationPS5_TITLE_ID "/assets",
+                                        "/data/homebrew/" SwanStationPS5_TITLE_ID "/assets"};
     static int chosen = -1;
     if (chosen < 0)
     {
@@ -2489,7 +2553,8 @@ void plat_asset_path(char *out, size_t size, const char *relative)
 uint64_t plat_ticks_us(void)
 {
 #if defined(SwanStationPS5_PREVIEW)
-    return 1000000ull + preview_clock;
+    if (!live_on) /* the laptop preview runs on the real clock */
+        return 1000000ull + preview_clock;
 #endif
     return SDL_GetPerformanceCounter() * 1000000ull / SDL_GetPerformanceFrequency();
 }

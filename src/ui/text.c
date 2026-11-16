@@ -22,7 +22,7 @@
 
 #define FIRST_CP 32
 #define CP_COUNT 224 /* U+0020..U+00FF */
-#define MAX_ATLASES 16
+#define MAX_ATLASES 32
 #define MAX_EXTRA 2048
 #define MAX_REQUESTED 1024
 
@@ -36,9 +36,9 @@ typedef struct
     PlatTexture *texture;
 } Atlas;
 
-static unsigned char *font_data[3]; /* regular, bold (the theme's), mono */
-static stbtt_fontinfo font_info[3];
-static bool font_ok[3];
+static unsigned char *font_data[FONT_FACES]; /* regular, bold (the theme's), mono, tech, square */
+static stbtt_fontinfo font_info[FONT_FACES];
+static bool font_ok[FONT_FACES];
 static Atlas atlases[MAX_ATLASES];
 static int atlas_count;
 
@@ -135,6 +135,22 @@ bool text_init(void)
         free(font_data[FONT_MONO]);
         font_data[FONT_MONO] = NULL;
     }
+    static const char *const extra_faces[] = {[FONT_TECH] = "fonts/ShareTechMono-400.ttf",
+                                              [FONT_SQUARE] = "fonts/ChakraPetch-700.ttf",
+                                              [FONT_PS1] = "fonts/Asap-Black.ttf"};
+    for (int w = FONT_TECH; w < FONT_FACES; ++w)
+    {
+        char path[SwanStationPS5_PATH_MAX];
+        plat_asset_path(path, sizeof(path), extra_faces[w]);
+        font_data[w] = read_file(path);
+        font_ok[w] = font_data[w] && stbtt_InitFont(&font_info[w], font_data[w], stbtt_GetFontOffsetForIndex(font_data[w], 0));
+        if (!font_ok[w])
+        {
+            SwanStationPS5_log("font missing or invalid: %s (the bold face is used)", path);
+            free(font_data[w]);
+            font_data[w] = NULL;
+        }
+    }
     char jp_path[SwanStationPS5_PATH_MAX];
     plat_asset_path(jp_path, sizeof(jp_path), "fonts/NotoSansJP-SwanStationPS5.ttf");
     jp_data = read_file(jp_path);
@@ -158,7 +174,7 @@ static void free_atlases(void)
 void text_shutdown(void)
 {
     free_atlases();
-    for (int w = 0; w < 3; ++w)
+    for (int w = 0; w < FONT_FACES; ++w)
         free(font_data[w]);
     free(jp_data);
 }
@@ -255,7 +271,7 @@ static int bucket_for(float size)
 
 static Atlas *get_atlas(int weight, float size)
 {
-    weight = weight == FONT_MONO && font_ok[FONT_MONO] ? FONT_MONO : weight ? FONT_BOLD : FONT_REGULAR;
+    weight = weight >= FONT_MONO && weight < FONT_FACES && font_ok[weight] ? weight : weight ? FONT_BOLD : FONT_REGULAR;
     if (!font_ok[weight])
         return NULL;
     /* the glyphs are drawn at the screen's real pixels (PC: the window's), not at 1080p stretched */

@@ -59,6 +59,9 @@ float draw_hint_combo(float x, float y, const int *glyphs, int count, char sep, 
 uint32_t argb_alpha(uint32_t argb, float alpha); /* scales the alpha channel */
 uint32_t argb_lerp(uint32_t a, uint32_t b, float t);
 
+/* The PS1 theme squares every rounded rectangle; the few pills it keeps (its button chips) are drawn between
+ * draw_keep_round(true) and draw_keep_round(false). */
+void draw_keep_round(bool on);
 /* Rounded shapes, built from fills and a cached circle texture (fast path). */
 void draw_rrect(float x, float y, float w, float h, float radius, uint32_t argb);
 void draw_rrect_outline(float x, float y, float w, float h, float radius, float thickness,

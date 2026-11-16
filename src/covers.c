@@ -33,7 +33,8 @@
 #define KEEP_RADIUS 22  /* textures kept around the cursor */
 #define LOAD_RADIUS 16  /* covers requested around the cursor (the grid and spines show more) */
 #define MAX_HEIGHT 640  /* decoded covers are scaled down to this */
-#define QUEUE_SIZE 64
+#define QUEUE_SIZE 256
+#define FAR (1 << 30)
 
 typedef enum
 {
@@ -47,10 +48,14 @@ typedef struct
 {
     SlotState state;
     PlatTexture *texture;
+    PlatTexture *icon; /* the PS1 theme's memory-card icon: the cover in 32x32 pixels of 15-bit colour */
     bool placeholder; /* texture is a title card, real art may still arrive */
     uint8_t *pixels;
     int w, h;
     uint32_t color; /* average colour, for the shelf's background tint */
+    int dist;          /* shelf positions from the centre, this frame (FAR: not on the shelf) */
+    uint32_t used;     /* frame it was last within the load radius (the LRU) */
+    uint32_t uploaded; /* frame its texture went up (covers_age) */
     /* copies, so the worker never touches the Library */
     char title[96];
     char serial[16];
@@ -73,6 +78,9 @@ static bool quit;
 static int queue[QUEUE_SIZE];
 static int queue_len;
 static int downloading;
+/* shelf v3: the window covers_set_window() asks for; -1 = the stock radii */
+static int win_load = -1, win_keep;
+static uint32_t frame;
 
 void covers_url(char *out, size_t size, int cover_style, const char *serial)
 {
@@ -146,10 +154,53 @@ static uint8_t *title_card(const char *title, int *w, int *h)
     return px;
 }
 
+/* A scan's border: one line (a row, or a column) of nearly one colour that is near white (the scanner's lid) or nearly
+ * pure black. Artwork that is merely dark or pale keeps its texture and is never taken for a border. */
+static bool border_line(const uint8_t *px, int w, int x0, int y0, int dx, int dy, int n)
+{
+    long sum = 0, sum2 = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const uint8_t *p = &px[((size_t)(y0 + dy * i) * w + x0 + dx * i) * 4];
+        const int v = (p[0] + p[1] + p[2]) / 3;
+        sum += v, sum2 += (long)v * v;
+    }
+    const float mean = (float)sum / n, var = (float)sum2 / n - mean * mean;
+    return (mean > 232.0f && var < 64.0f) || (mean < 10.0f && var < 16.0f);
+}
+
+/* Cuts the uniform near-white or near-black border scans often have, so the art reaches the case's edges: at most 6% of
+ * a side, and only lines that are a border all along (P1-15). In place: the rows move up to the buffer's start. */
+static void trim_borders(uint8_t *px, int *w, int *h)
+{
+    const int W = *w, H = *h;
+    if (W < 64 || H < 64)
+        return;
+    int top = 0, bottom = H, left = 0, right = W;
+    const int max_x = W * 6 / 100, max_y = H * 6 / 100;
+    while (top < max_y && border_line(px, W, 0, top, 1, 0, W))
+        ++top;
+    while (H - bottom < max_y && border_line(px, W, 0, bottom - 1, 1, 0, W))
+        --bottom;
+    while (left < max_x && border_line(px, W, left, top, 0, 1, bottom - top))
+        ++left;
+    while (W - right < max_x && border_line(px, W, right - 1, top, 0, 1, bottom - top))
+        --right;
+    if (!top && bottom == H && !left && right == W)
+        return;
+    const int nw = right - left, nh = bottom - top;
+    for (int y = 0; y < nh; ++y)
+        memmove(&px[(size_t)y * nw * 4], &px[((size_t)(top + y) * W + left) * 4], (size_t)nw * 4);
+    *w = nw;
+    *h = nh;
+}
+
 static uint8_t *load_image(const char *path, int *w, int *h)
 {
     int comp;
     uint8_t *px = stbi_load(path, w, h, &comp, 4);
+    if (px)
+        trim_borders(px, w, h);
     return px ? downscale(px, w, h) : NULL;
 }
 
@@ -308,8 +359,13 @@ static int worker_main(void *unused)
             SDL_CondWait(wake, lock);
             continue;
         }
-        int index = queue[0];
-        memmove(queue, queue + 1, (size_t)--queue_len * sizeof(int));
+        /* shelf v3: the nearest queued cover first, so a page that just settled jumps ahead of older requests */
+        int best = 0;
+        for (int q = 1; q < queue_len; ++q)
+            if (queue[q] < slot_count && (queue[best] >= slot_count || slots[queue[q]].dist < slots[queue[best]].dist))
+                best = q;
+        int index = queue[best];
+        memmove(queue + best, queue + best + 1, (size_t)(--queue_len - best) * sizeof(int));
         if (index >= slot_count || slots[index].state != SLOT_QUEUED)
             continue;
         Slot job = slots[index]; /* copy: strings stay valid without the lock */
@@ -319,6 +375,14 @@ static int worker_main(void *unused)
         int w = 0, h = 0;
         bool placeholder;
         uint8_t *px = produce(&job, &w, &h, &placeholder);
+#ifdef SwanStationPS5_PREVIEW
+        {
+            /* the laptop preview: SwanStationPS5_COVER_DELAY_MS slows each cover down like a USB stick on the PS5 */
+            const char *delay = getenv("SwanStationPS5_COVER_DELAY_MS");
+            if (delay)
+                SDL_Delay((uint32_t)atoi(delay));
+        }
+#endif
 
         SDL_LockMutex(lock);
         --downloading;
@@ -358,6 +422,7 @@ static void free_slots(void)
     for (int i = 0; i < slot_count; ++i)
     {
         plat_texture_free(slots[i].texture);
+        plat_texture_free(slots[i].icon);
         free(slots[i].pixels);
     }
     free(slots);
@@ -410,9 +475,57 @@ void covers_stop(void)
     free_slots();
 }
 
+/* The PS1 theme's block icon: the cover's middle square averaged down to ICON x ICON pixels and cut to the console's
+ * 15-bit colour, drawn later without smoothing (a memory card's save icon, more or less). */
+#define ICON 32
+static PlatTexture *make_icon(const uint8_t *px, int w, int h)
+{
+    if (!px || w < ICON || h < ICON)
+        return NULL;
+    uint8_t out[ICON * ICON * 4];
+    const int side = w < h ? w : h, x0 = (w - side) / 2, y0 = (h - side) / 2;
+    for (int y = 0; y < ICON; ++y)
+        for (int x = 0; x < ICON; ++x)
+        {
+            const int sx0 = x0 + x * side / ICON, sx1 = x0 + (x + 1) * side / ICON;
+            const int sy0 = y0 + y * side / ICON, sy1 = y0 + (y + 1) * side / ICON;
+            uint32_t sum[3] = {0, 0, 0}, n = 0;
+            for (int yy = sy0; yy < sy1; yy += 2)
+                for (int xx = sx0; xx < sx1; xx += 2)
+                {
+                    const uint8_t *p = &px[((size_t)yy * w + xx) * 4];
+                    sum[0] += p[0], sum[1] += p[1], sum[2] += p[2], ++n;
+                }
+            uint8_t *o = &out[(y * ICON + x) * 4];
+            for (int c = 0; c < 3; ++c)
+            {
+                uint32_t v = n ? sum[c] / n : 0;
+                /* a little more contrast, then 5 bits a channel */
+                int k = (int)(((int)v - 128) * 1.12f + 128);
+                k = k < 0 ? 0 : k > 255 ? 255 : k;
+                o[c] = (uint8_t)((k & 0xf8) | (k >> 5));
+            }
+            o[3] = 255;
+        }
+    return plat_texture_create(out, ICON, ICON, false);
+}
+
 void covers_update(int center)
 {
     covers_update_view(NULL, slot_count, center);
+}
+
+void covers_set_window(int load_radius, int max_textures)
+{
+    win_load = load_radius;
+    win_keep = max_textures;
+}
+
+int covers_age(int index)
+{
+    if (!slots || index < 0 || index >= slot_count || !slots[index].texture)
+        return -1;
+    return (int)(frame - slots[index].uploaded);
 }
 
 /* view[k] = library index shown at shelf position k (NULL: the library order). */
@@ -421,54 +534,83 @@ void covers_update_view(const int *view, int count, int center_pos)
     if (!slots)
         return;
     SDL_LockMutex(lock);
-    /* upload a few finished images per frame */
-    int uploads = 0;
-    for (int i = 0; i < slot_count && uploads < 3; ++i)
-    {
-        Slot *s = &slots[i];
-        if (s->state != SLOT_READY)
-            continue;
-        PlatTexture *t = plat_texture_create_mips(s->pixels, s->w, s->h);
-        free(s->pixels);
-        s->pixels = NULL;
-        plat_texture_free(s->texture);
-        s->texture = t;
-        s->state = SLOT_LOADED;
-        ++uploads;
-    }
-    /* free far textures, request near ones nearest-first */
-    static int *distance;
-    static int distance_size;
-    if (distance_size < slot_count)
-    {
-        int *grown = realloc(distance, sizeof(int) * (size_t)slot_count);
-        if (!grown)
-        {
-            SDL_UnlockMutex(lock);
-            return;
-        }
-        distance = grown;
-        distance_size = slot_count;
-    }
+    ++frame;
+    const int radius = win_load >= 0 ? win_load : LOAD_RADIUS;
     for (int i = 0; i < slot_count; ++i)
-        distance[i] = 1 << 30;
+        slots[i].dist = FAR;
     for (int k = 0; k < count; ++k)
     {
         int i = view ? view[k] : k;
         if (i >= 0 && i < slot_count)
-            distance[i] = k > center_pos ? k - center_pos : center_pos - k;
-    }
-    for (int i = 0; i < slot_count; ++i)
-    {
-        int d = distance[i];
-        if (d > KEEP_RADIUS && slots[i].state == SLOT_LOADED)
         {
-            plat_texture_free(slots[i].texture);
-            slots[i].texture = NULL;
-            slots[i].state = SLOT_EMPTY;
+            slots[i].dist = k > center_pos ? k - center_pos : center_pos - k;
+            if (slots[i].dist <= radius)
+                slots[i].used = frame;
         }
     }
-    for (int d = 0; d <= LOAD_RADIUS; ++d)
+    /* upload a few finished images per frame, the nearest first */
+    for (int uploads = 0; uploads < 3; ++uploads)
+    {
+        Slot *s = NULL;
+        for (int i = 0; i < slot_count; ++i)
+            if (slots[i].state == SLOT_READY && (!s || slots[i].dist < s->dist))
+                s = &slots[i];
+        if (!s)
+            break;
+        PlatTexture *t = plat_texture_create_mips(s->pixels, s->w, s->h);
+        plat_texture_free(s->icon);
+        s->icon = s->placeholder ? NULL : make_icon(s->pixels, s->w, s->h);
+        free(s->pixels);
+        s->pixels = NULL;
+        /* a replaced picture (after a pick) swaps at once; a new one fades in */
+        s->uploaded = s->texture ? frame - 1000u : frame;
+        plat_texture_free(s->texture);
+        s->texture = t;
+        s->state = SLOT_LOADED;
+    }
+    /* shelf v3: requests that fell out of the window (fast paging) are dropped, not decoded */
+    int kept = 0;
+    for (int q = 0; q < queue_len; ++q)
+    {
+        int i = queue[q];
+        if (i < slot_count && slots[i].state == SLOT_QUEUED && slots[i].dist > radius)
+            slots[i].state = SLOT_EMPTY;
+        else
+            queue[kept++] = i;
+    }
+    queue_len = kept;
+    /* free far textures */
+    if (win_load < 0)
+    {
+        for (int i = 0; i < slot_count; ++i)
+            if (slots[i].dist > KEEP_RADIUS && slots[i].state == SLOT_LOADED)
+                slots[i].state = SLOT_EMPTY, plat_texture_free(slots[i].texture), slots[i].texture = NULL,
+                plat_texture_free(slots[i].icon), slots[i].icon = NULL;
+    }
+    else
+    {
+        /* shelf v3: the window stays; beyond it the least recently shown go once there are more than win_keep */
+        int loaded = 0;
+        for (int i = 0; i < slot_count; ++i)
+            loaded += slots[i].state == SLOT_LOADED;
+        while (loaded > win_keep)
+        {
+            Slot *old = NULL;
+            for (int i = 0; i < slot_count; ++i)
+                if (slots[i].state == SLOT_LOADED && slots[i].dist > radius && (!old || slots[i].used < old->used))
+                    old = &slots[i];
+            if (!old)
+                break;
+            plat_texture_free(old->texture);
+            old->texture = NULL;
+            plat_texture_free(old->icon);
+            old->icon = NULL;
+            old->state = SLOT_EMPTY;
+            --loaded;
+        }
+    }
+    /* request near ones nearest-first */
+    for (int d = 0; d <= radius; ++d)
         for (int side = -1; side <= 1; side += 2)
         {
             int k = center_pos + d * side;
@@ -485,6 +627,11 @@ void covers_update_view(const int *view, int count, int center_pos)
     if (queue_len)
         SDL_CondSignal(wake);
     SDL_UnlockMutex(lock);
+}
+
+PlatTexture *covers_icon(int index)
+{
+    return (slots && index >= 0 && index < slot_count && slots[index].texture) ? slots[index].icon : NULL;
 }
 
 PlatTexture *covers_get(int index)

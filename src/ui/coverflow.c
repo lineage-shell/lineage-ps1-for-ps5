@@ -26,6 +26,12 @@
 #include "case3d.h"
 #include "draw.h"
 #include "icons.h"
+#include "ps1.h"
+
+/* The PS1 theme gives a screen coming and going its own sounds (console-sounds/open.wav, close.wav); the other
+ * themes keep Select and Back */
+#define SFX_SCREEN_OPEN (TH_PS1 ? SFX_OPEN : SFX_SELECT)
+#define SFX_SCREEN_CLOSE (TH_PS1 ? SFX_CLOSE : SFX_BACK)
 #include "sfx.h"
 #include "text.h"
 #include "theme.h"
@@ -38,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #define CENTER_X 960.0f
@@ -61,6 +68,11 @@
 #define CASE_DISC_TIME 2.4f /* the same with the 3D cases: the lid opens and the CD spins up on its tray */
 #define LAUNCH_STICK 0.1f /* with the 3D cases: how far the right stick turns the case while the CD spins (1 = all the way) */
 static bool shelf_cases(void);
+/* shelf v3 (ps1_shelf.inc): the search keypad, its full-text match, the cover picker's screen */
+static bool ps1_search_match(const Game *g, const char *text);
+static void ps1_search_input(uint32_t pressed);
+static void ps1_search_draw(void);
+static void ps1_picker_draw(void);
 
 static float disc_time(void)
 {
@@ -69,7 +81,7 @@ static float disc_time(void)
 
 static float launch_total(void)
 {
-    return app.global.disc_animation ? disc_time() + LAUNCH_TIME : LAUNCH_TIME;
+    return app.global.disc_animation && !TH_PS1 ? disc_time() + LAUNCH_TIME : LAUNCH_TIME; /* shelf v3: PS1, a fade */
 }
 
 static struct
@@ -272,7 +284,8 @@ static void build_view(int keep_game)
     }
     S.view_count = 0;
     for (int i = 0; i < app.library.count; ++i)
-        if (S.filter[0] ? matches_filter(&app.library.games[i], S.filter) /* all the games, not the category's */
+        if (S.filter[0] ? (TH_PS1 ? ps1_search_match(&app.library.games[i], S.filter) /* shelf v3: the titles' text */
+                                  : matches_filter(&app.library.games[i], S.filter)) /* all the games, not the category's */
                         : in_category(&app.library.games[i], g->shelf_category))
             S.view[S.view_count++] = i;
     sort_mode = g->shelf_category == CAT_RECENT ? SORT_RECENT : g->sort_mode;
@@ -296,10 +309,12 @@ static float flow_y(void)
 }
 
 /* DuckStation's name for the disc when its database knows it, else the file or folder name */
+static const char *ps1_title(const char *name); /* shelf v3 (ps1_shelf.inc): no disc tags, "The ..." first */
 static const char *display_title(const Game *g)
 {
     const GameInfo *info = gamedb_get(g->serial);
-    return info && info->name[0] ? info->name : g->title;
+    const char *name = info && info->name[0] ? info->name : g->title;
+    return TH_PS1 ? ps1_title(name) : name; /* shelf v3 */
 }
 
 const char *shelf_game_title(const Game *g)
@@ -431,6 +446,11 @@ static void make_backdrop(uint8_t *grey, int W, int H, int style, bool light)
 
 void shelf_backdrop(void)
 {
+    if (theme.backdrop == BACKDROP_PS1)
+    {
+        ps1_background(5); /* the console's blue light, behind Settings and the other screens */
+        return;
+    }
     enum { W = 1920, H = 1080 };
     static uint8_t *grey;
     static int made = -1; /* style * 2 + light */
@@ -591,7 +611,7 @@ static void draw_cover_reflection(PlatTexture *tex, float x, float y, float w, f
  * style "3D case") already are cases, and a missing model falls back to the flat covers too. */
 static bool shelf_cases(void)
 {
-    return plat_gpu_ui_active() && theme.layout != LAYOUT_GRID && theme.layout != LAYOUT_SPINES &&
+    return plat_gpu_ui_active() && theme.layout != LAYOUT_GRID && theme.layout != LAYOUT_SPINES && !TH_PS1 &&
            app.global.jewel_cases && /* app.global.cover_style == COVER_FLAT && */ case3d_available();
 }
 
@@ -1000,7 +1020,7 @@ static void change_category(int step)
     app.global.shelf_category = c;
     build_view(keep);
     S.title_fade = 0;
-    sfx_play(SFX_CLICK);
+    sfx_play(SFX_PAGE);
 }
 
 /* ---------------------------------------------------------------- cover picker */
@@ -1138,7 +1158,7 @@ static void picker_input(uint32_t pressed)
     else if (pressed & (BIT(BTN_CIRCLE) | BIT(BTN_SQUARE)))
     {
         picker_close();
-        sfx_play(SFX_BACK);
+        sfx_play(SFX_SCREEN_CLOSE);
     }
 }
 
@@ -1148,10 +1168,25 @@ static void picker_draw(void)
     if (P.t <= 0.0f || !P.files)
         return;
     float t = P.t, e = 1.0f - (1.0f - t) * (1.0f - t);
-    draw_rect(0, 0, plat_width(), plat_height(), argb_alpha(0xc0000000u, t));
+    if (TH_PS1)
+    {
+        /* the PS1 theme: a screen of its own, not a box over the shelf */
+        if (!P.open)
+            return;
+        ps1_picker_draw(); /* shelf v3 */
+        return;
+        t = e = 1.0f;
+        ps1_background(5);
+        ps1_title_plate(tr("Choose a cover"), 1824, 64);
+    }
+    else
+        draw_rect(0, 0, plat_width(), plat_height(), argb_alpha(0xc0000000u, t));
     const float w = 1400, h = 800, x = CENTER_X - w * 0.5f, y = 130 + (1.0f - e) * 40;
-    draw_rrect(x, y, w, h, TH_RADIUS, argb_alpha(TH_CARD, t));
-    text_draw(x + 40, y + 30, 32, FONT_BOLD, argb_alpha(TH_TEXT, t), ALIGN_LEFT, tr("Choose a cover"));
+    if (!TH_PS1)
+    {
+        draw_rrect(x, y, w, h, TH_RADIUS, argb_alpha(TH_CARD, t));
+        text_draw(x + 40, y + 30, 32, FONT_BOLD, argb_alpha(TH_TEXT, t), ALIGN_LEFT, tr("Choose a cover"));
+    }
     text_draw_fit(x + 40, y + 76, 22, FONT_REGULAR, argb_alpha(TH_TEXT_DIM, t), ALIGN_LEFT, 760,
                   shelf_game_title(&app.library.games[P.game]));
 
@@ -1447,6 +1482,7 @@ static void draw_launch_disc(int game, float d, float t)
 }
 
 static bool start_black; /* the frame in which the game starts: all black, with the loading text */
+static void ps1_dialog_opened(int game); /* ps1_shelf.inc */
 
 /* X on a game: offers Continue when it has a quick-resume save, else starts it. `ask` false: it starts from the
  * beginning, with no Continue box. `silent`: without the click of the button press. */
@@ -1468,6 +1504,8 @@ static void play_game(int game, bool ask, bool silent)
                              : NULL;
         S.dialog = true;
         S.dialog_choice = 0;
+        if (TH_PS1)
+            ps1_dialog_opened(game); /* not a box: the game's page, with Continue / Start over on it */
         return;
     }
     S.resume = false;
@@ -1505,7 +1543,7 @@ static void filter_open(void)
     F.row = 1;
     F.col = 0;
     F.symbols = false;
-    sfx_play(SFX_SELECT);
+    sfx_play(SFX_SCREEN_OPEN);
     if (app.global.shelf_category != CAT_ALL)
     {
         /* it always looks through all the games */
@@ -1518,6 +1556,11 @@ static void filter_open(void)
 
 static void filter_input(uint32_t pressed)
 {
+    if (TH_PS1)
+    {
+        ps1_search_input(pressed); /* shelf v3: the CD Player keypad */
+        return;
+    }
     int row = F.row, col = F.col;
     if (pressed & BIT(BTN_UP))
         F.row = (F.row + FILTER_ROWS) % (FILTER_ROWS + 1);
@@ -1585,7 +1628,7 @@ static void filter_input(uint32_t pressed)
         app.settings.shelf_category = F.before_category;
         str_copy(F.text, sizeof(F.text), F.before);
         filter_changed();
-        sfx_play(SFX_BACK);
+        sfx_play(SFX_SCREEN_CLOSE);
     }
 }
 
@@ -1593,6 +1636,11 @@ static void filter_draw(void)
 {
     if (!F.open)
         return;
+    if (TH_PS1)
+    {
+        ps1_search_draw(); /* shelf v3: the CD Player keypad over the library */
+        return;
+    }
     draw_rect(0, 0, plat_width(), plat_height(), 0xc0000000u);
     const float mw = 760, key = 62, gap = 8, kh = 54;
     const float mh = 76 + 62 + 22 + (FILTER_ROWS + 1) * (kh + gap) + 14;
@@ -1646,6 +1694,16 @@ static void filter_draw(void)
     }
 }
 
+#include "ps1_shelf.inc"
+
+static void ps1_dialog_opened(int game)
+{
+    /* not a box: the game's page, where PLAY continues from the newest save */
+    S.dialog = false;
+    open_page(game);
+    cut_to(V_GAME);
+}
+
 bool shelf_idle(void)
 {
     return !S.dialog && S.launch_t <= 0.0f && !S.starting && !P.open && !F.open;
@@ -1661,7 +1719,8 @@ bool shelf_show_game(int library_index)
         app.global.shelf_category = CAT_ALL;
         app.settings.shelf_category = CAT_ALL;
     }
-    if (S.filter[0] && !matches_filter(&app.library.games[library_index], S.filter))
+    if (S.filter[0] && !(TH_PS1 ? ps1_search_match(&app.library.games[library_index], S.filter) /* shelf v3 */
+                                : matches_filter(&app.library.games[library_index], S.filter)))
     {
         S.filter[0] = '\0'; /* the filter hides it: off */
         build_view(selected_game());
@@ -1699,6 +1758,13 @@ bool shelf_start_game(int library_index)
 
 void shelf_screen(uint32_t pressed)
 {
+    static bool started;
+    if (!started)
+    {
+        started = true;
+        if (!(TH_PS1 && ps1k_was_intro())) /* shelf v3: once only (the BIOS's chime when its startup played) */
+            sfx_play(SFX_STARTUP); /* the shelf's first frame: console-sounds/startup.wav, when it is there */
+    }
     if (app.storage_error[0])
     {
         storage_screen(pressed);
@@ -1706,7 +1772,8 @@ void shelf_screen(uint32_t pressed)
     }
     /* O pressed with the shelf free: only such a press can start the hold-to-exit */
     const bool circle_on_shelf =
-        (pressed & BIT(BTN_CIRCLE)) && !(S.dialog || S.details || P.open || F.open || S.launch_t > 0.0f);
+        (pressed & BIT(BTN_CIRCLE)) && !(S.dialog || S.details || P.open || F.open || S.launch_t > 0.0f) &&
+        (!TH_PS1 || ps1_quit_allowed()); /* shelf v3: only from the main menu */
 
     /* ------------------------------------------------ input */
     if (P.open)
@@ -1740,6 +1807,8 @@ void shelf_screen(uint32_t pressed)
         }
         pressed = 0;
     }
+    if (TH_PS1 && S.launch_t <= 0.0f && !S.dialog)
+        pressed = ps1_shelf_input(pressed); /* the blocks and the game's page take the arrows, X and O */
     if (S.launch_t <= 0.0f)
     {
         int before = S.cursor;
@@ -1828,7 +1897,7 @@ void shelf_screen(uint32_t pressed)
         }
         if ((pressed & BIT(BTN_MENU)) && !S.details)
         {
-            sfx_play(SFX_SELECT);
+            sfx_play(SFX_SCREEN_OPEN);
             memcards_open(SCREEN_LIBRARY);
             return;
         }
@@ -1916,12 +1985,12 @@ void shelf_screen(uint32_t pressed)
             play_game(game, true, false);
         if ((pressed & BIT(BTN_SQUARE)) && S.details && game >= 0)
         {
-            sfx_play(SFX_SELECT);
+            sfx_play(SFX_SCREEN_OPEN);
             picker_open(game);
         }
         else if (pressed & BIT(BTN_SQUARE))
         {
-            sfx_play(SFX_SELECT);
+            sfx_play(SFX_SCREEN_OPEN);
             config_save(&app.global, app.paths.config);
             /* with the game under the cursor, so Settings can be for "This game" or "All games" */
             app_open_shelf_settings(game >= 0 ? &app.library.games[game] : NULL);
@@ -2028,6 +2097,10 @@ void shelf_screen(uint32_t pressed)
         start_black = true; /* this frame is still drawn: black, not the shelf for a moment */
         config_save(&app.global, app.paths.config);
         app_start_game(game, S.resume);
+        if (TH_PS1)
+            ps1_after_start(); /* shelf v3: the save chosen on the game's page, once the game is up */
+        else
+            S.details = false;
     }
     else if (S.launch_t > 0.0f)
     {
@@ -2035,15 +2108,23 @@ void shelf_screen(uint32_t pressed)
         S.launch_t = fminf(S.launch_t + app.dt, launch_total());
         if (shelf_cases() && app.global.disc_animation && before < CASE_SPIN_START && S.launch_t >= CASE_SPIN_START)
             sfx_play_disc();
+        else if (false && TH_PS1 && app.global.disc_animation && before < 0.05f && S.launch_t >= 0.05f) /* shelf v3: no disc */
+            sfx_play_disc(); /* the PS1 launch's disc spins up: its sound with it */
         if (S.launch_t >= launch_total())
             S.starting = true;
     }
     plat_profile("start");
-    covers_update_view(S.view, S.view_count, S.cursor);
+    ps1_cover_window(); /* shelf v3: this page and both neighbours, plus a small LRU */
+    covers_update_view(S.view, S.view_count, TH_PS1 ? ps1_cover_centre() : S.cursor); /* shelf v3: a whole page */
     update_tint(game);
     plat_profile("covers-upload");
 
     /* ------------------------------------------------ shelf */
+    if (TH_PS1)
+    {
+        ps1_shelf_draw(game);
+        return;
+    }
     shelf_backdrop();
     if (theme.shelf_plank)
     {

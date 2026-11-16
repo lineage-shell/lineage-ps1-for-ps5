@@ -21,6 +21,7 @@
 #include "coverflow.h"
 #include "draw.h"
 #include "icons.h"
+#include "ps1.h"
 #include "sfx.h"
 #include "text.h"
 #include "theme.h"
@@ -81,6 +82,11 @@ enum Special
     SP_USBFOLDER, /* the games folder on USB drives, typed */
     SP_NFSHARES,  /* the NFS servers that hold games, typed */
     SP_DRIVES,    /* the extended and USB drives found, with their free space */
+    SP_BIOSFOLDER,  /* shelf v3: the folder searched first for a BIOS, typed */
+    SP_CREDIT_UI,   /* shelf v3: the About tab's credits, one row per part */
+    SP_CREDIT_EMU,
+    SP_CREDIT_GPU,
+    SP_CREDIT_BASE,
 };
 
 typedef struct
@@ -137,6 +143,9 @@ static const char *const ANALOG_COMBOS[] = {
 static const char *const MENU_COMBOS[] = {"{Touchpad} + {R3}", "{L3} + {R3}", "{Options} + {Touchpad}"};
 static const char *const MENU_HOLDS[] = {"Immediate", "0.5 seconds", "1 second"};
 static const char *const BACKGROUNDS[] = {"Dark", "Cover colour"};
+static const char *const LIBRARY_LAYOUTS[] = {"Grid 9\xc3\x97" "3", "Large 6\xc3\x97" "2"}; /* PS1 shelf v3 */
+static const char *const SCREEN_SHAPES[] = {"16:9", "4:3"};                              /* shelf v3 */
+static const char *const SPLATTERS[] = {"Pixel", "Smooth"};                                /* shelf v3 */
 static const char *const CRT_LEVELS[] = {"Off", "Light", "Strong"};
 static const char *const BORDERS[] = {"Black", "Current background", "TV frame"};
 static const char *const CROPS[] = {"Off", "A little", "More"};
@@ -300,6 +309,15 @@ static const Row ACHIEVEMENTS[] = {
 static const Row LIBRARY[] = {
     {"Shelf", "Theme", "The look of SwanStationPS5: colours, fonts and the shelf's background.", K_CHOICE, APPLY_NOW, SP_THEME,
      true, INT_FIELD(theme), THEME_NAMES, THEME_COUNT, 0},
+    {NULL, "Library layout", "The PS1 library's grid: 27 small covers to a page (Grid 9\xc3\x97" "3), or 12 bigger ones (Large 6\xc3\x97" "2).",
+     K_CHOICE, APPLY_NOW, SP_NONE, true, INT_FIELD(shelf_layout), LIBRARY_LAYOUTS, 2, 0},
+    /* shelf v3: the PS1 shelf's screen shape and splatters */
+    {NULL, "Screen shape", "16:9 fills the screen: the groups at the sides move out. 4:3 keeps the console's own area, with dark sides.",
+     K_CHOICE, APPLY_NOW, SP_NONE, true, INT_FIELD(shelf_shape), SCREEN_SHAPES, 2, 0},
+    {NULL, "Splatters", "The paint behind the main words: Pixel, blocky as on the console, or Smooth, at the screen's resolution.",
+     K_CHOICE, APPLY_NOW, SP_NONE, true, INT_FIELD(shelf_splat), SPLATTERS, 2, 0},
+    {NULL, "PlayStation screen from a disc", "The opening's PlayStation screen needs the 3D logo every game disc carries. On: once, with the menu up, it is read from a disc of your library (never started) and kept for the next start.",
+     K_TOGGLE, APPLY_NOW, SP_NONE, true, BOOL_FIELD(shelf_logo_scan), OFF_ON, 2, 0},
     /* the pre-rendered 3D box covers are no longer used: the covers are always flat
     {NULL, "Cover art", "Flat front covers, or 3D boxes.", K_CHOICE, APPLY_NOW, SP_NONE, true,
      INT_FIELD(cover_style), COVER_STYLES, 2, 0},
@@ -337,6 +355,8 @@ static const Row SYSTEM[] = {
      APPLY_NOW, SP_NONE, true, BOOL_FIELD(restart_after_game), OFF_ON, 2, 0},
     {NULL, "Games folder on drives", "A folder name to look for games in on drives. It is looked for on /mnt/ext0/, /mnt/ext1/ and /mnt/usb0/ to /mnt/usb7/ at once, as the number changes with the drives plugged in: psx searches /mnt/usb0/psx, /mnt/usb1/psx and so on. Leave it empty to turn it off.",
      K_ACTION, APPLY_NOW, SP_USBFOLDER, true, NO_FIELD, NULL, 0, 0},
+    {NULL, "BIOS folder", "The folder looked in first for your BIOS file. Then /data/SwanStationPS5/bios is checked. Leave it empty for the default.",
+     K_ACTION, APPLY_NOW, SP_BIOSFOLDER, true, NO_FIELD, NULL, 0, 0},
     {NULL, "NFS shares", "Games on an NFS server of your network, as nfs:// addresses separated by ';'. Example: nfs://192.168.1.85/psx. The shelf lists them like a drive's; only SwanStationPS5 sees them. The server has to export the folder to the console. Rescan library connects the ones that did not.",
      K_ACTION, APPLY_NOW, SP_NFSHARES, true, NO_FIELD, NULL, 0, 0},
     {NULL, "NTFS disks", "Games on a USB disk formatted as NTFS, read straight from the disk and never copied. The shelf lists the Games folder on drives (and SwanStationPS5/games) of each disk; only SwanStationPS5 sees them. Rescan library looks for disks plugged in after the start. A disk Windows left in Fast Startup may not show its latest changes.", K_TOGGLE,
@@ -349,6 +369,8 @@ static const Row SYSTEM[] = {
      SP_NONE, false, INT_FIELD(cd_speed), CD_SPEEDS, 10, 1},
     {NULL, "PS1 startup intro", "Shows the PlayStation logo and sound before the game, as a real console does. Needs your own BIOS.",
      K_TOGGLE, APPLY_NEXT_GAME, SP_NONE, false, BOOL_FIELD(boot_intro), OFF_ON, 2, 0},
+    {NULL, "Startup animation", "When the app opens, your BIOS plays the console's own startup (the Sony screen and its sound) with no disc, then the library. Any button skips it. Needs your own BIOS.",
+     K_TOGGLE, APPLY_NOW, SP_NONE, true, BOOL_FIELD(startup_intro), OFF_ON, 2, 0},
     {NULL, "Known game fixes", "For that game only, applies what the game database knows it needs: turns off the settings it breaks with (PGXP, widescreen, upscaling, filtering) and turns on what it requires (CPU cache, PGXP options, screen and DMA timing).",
      K_TOGGLE, APPLY_NEXT_GAME, SP_NONE, false, BOOL_FIELD(game_fixes), OFF_ON, 2, 0},
     {"Playing", "Quick resume", "Saves when you leave a game, so the shelf can offer Continue.", K_TOGGLE,
@@ -372,8 +394,7 @@ static const Row SYSTEM[] = {
 };
 
 static const Row ABOUT[] = {
-    {"SwanStationPS5", "Version", "PlayStation X Super 5: PS1 emulation for jailbroken PS5, built on SwanStation.",
-     K_INFO, APPLY_NOW, SP_VERSION, true, NO_FIELD, NULL, 0, 0},
+    {"SwanStationPS5", "Version", "This app's version.", K_INFO, APPLY_NOW, SP_VERSION, true, NO_FIELD, NULL, 0, 0},
     {NULL, "BIOS", "SwanStationPS5 never includes a BIOS: use a dump of your own console, or the built-in one.",
      K_INFO, APPLY_NOW, SP_BIOS, true, NO_FIELD, NULL, 0, 0},
     {NULL, "Games", "Games are your own backups, in /data/SwanStationPS5/games.", K_INFO, APPLY_NOW, SP_GAMES,
@@ -382,8 +403,17 @@ static const Row ABOUT[] = {
      SP_DRIVES, true, NO_FIELD, NULL, 0, 0},
     {NULL, "Data folder", "Saves, states, covers and settings live here.", K_INFO, APPLY_NOW, SP_DATA,
      true, NO_FIELD, NULL, 0, 0},
-    {NULL, "Created by", "The person behind SwanStationPS5.", K_INFO, APPLY_NOW, SP_CREDITS, true, NO_FIELD, NULL, 0,
-     0},
+    /* shelf v3: who made what (README's Credits) */
+    {"Credits", "SwanStationPS5 (PS5 port)", "The PS5 app this one is built on.", K_INFO, APPLY_NOW, SP_CREDITS, true,
+     NO_FIELD, NULL, 0, 0},
+    {NULL, "PlayStation UI", "The PS1-style shelf, menus and opening.", K_INFO, APPLY_NOW, SP_CREDIT_UI, true,
+     NO_FIELD, NULL, 0, 0},
+    {NULL, "Emulator", "The SwanStation and DuckStation contributors.", K_INFO, APPLY_NOW, SP_CREDIT_EMU, true,
+     NO_FIELD, NULL, 0, 0},
+    {NULL, "Renderer (PSSwanStation)", "The core's hardware renderer.", K_INFO, APPLY_NOW, SP_CREDIT_GPU, true,
+     NO_FIELD, NULL, 0, 0},
+    {NULL, "First frontend (PSXS5)", "SwanStationPS5 started as a fork of PSXS5.", K_INFO, APPLY_NOW, SP_CREDIT_BASE,
+     true, NO_FIELD, NULL, 0, 0},
     {"Updates", "Check for updates", "Looks for a newer SwanStationPS5 on GitHub and installs it.", K_ACTION, APPLY_NOW,
      SP_UPDATE, true, NO_FIELD, NULL, 0, 0},
     {NULL, "Check when SwanStationPS5 starts", "Tells you on the shelf when a new version is out.", K_TOGGLE, APPLY_NOW,
@@ -1132,8 +1162,13 @@ static const char *value_label(const Row *r, char *buf, size_t size)
         return app.drive_text[S.drive];
     }
     case SP_CREDITS: return "AngelXex";
+    case SP_CREDIT_UI: return "@kurolume";
+    case SP_CREDIT_EMU: return "SwanStation";
+    case SP_CREDIT_GPU: return "Press5elect, Crux2";
+    case SP_CREDIT_BASE: return "SynoPiia";
     case SP_HOTKEYS: return tr("{Touchpad} + {R2} / {L2}");
     case SP_USBFOLDER: return app.global.usb_folder[0] ? app.global.usb_folder : tr("Off");
+    case SP_BIOSFOLDER: return app.global.bios_folder;
     case SP_NFSHARES: return app.global.nfs_shares[0] ? app.global.nfs_shares : tr("Off");
     case SP_UPDATE:
         switch (update_state())
@@ -1985,7 +2020,7 @@ static void draw_rows(void)
         }
         case K_ACTION:
             icon_draw(ICON_CHEVRON_RIGHT, right - 36, ry + 21, 34, TH_TEXT_SOFT);
-            if (r->special == SP_UPDATE || r->special == SP_USBFOLDER || r->special == SP_NFSHARES)
+            if (r->special == SP_UPDATE || r->special == SP_USBFOLDER || r->special == SP_NFSHARES || r->special == SP_BIOSFOLDER)
                 text_draw_fit(right - 50, ry + 24, 22, FONT_REGULAR, TH_TEXT_SOFT, ALIGN_RIGHT, w - 520,
                               value_label(r, buf, sizeof(buf)));
             break;
@@ -2022,6 +2057,26 @@ static void usb_folder_set(const char *text)
     str_copy(app.settings.usb_folder, sizeof(app.settings.usb_folder), name);
     app_save_settings();
     app_rescan();
+}
+
+/* shelf v3: the BIOS folder typed: an absolute path without the slash at its end; empty = the default */
+static void bios_folder_set(const char *text)
+{
+    char dir[sizeof(app.global.bios_folder)];
+    str_copy(dir, sizeof(dir), text);
+    size_t start = 0, end = strlen(dir);
+    while (start < end && dir[start] == ' ')
+        ++start;
+    while (end > start && (dir[end - 1] == '/' || dir[end - 1] == ' '))
+        --end;
+    dir[end] = '\0';
+    memmove(dir, dir + start, end - start + 1);
+    if (dir[0] != '/' || strstr(dir, ".."))
+        str_copy(dir, sizeof(dir), SwanStationPS5_BIOS_FOLDER);
+    str_copy(app.global.bios_folder, sizeof(app.global.bios_folder), dir);
+    str_copy(app.settings.bios_folder, sizeof(app.settings.bios_folder), dir);
+    app_save_settings();
+    app_bios_set_folder(dir);
 }
 
 void settings_nfs_shares_set(const char *text)
@@ -2106,6 +2161,11 @@ static void activate(const Row *r)
                        "Type one or more nfs:// addresses, separated by ';'. Example: nfs://192.168.1.85/psx",
                        app.global.nfs_shares[0] ? app.global.nfs_shares : "nfs://192.168.1.85/psx", settings_nfs_shares_set);
         return;
+    case SP_BIOSFOLDER: /* shelf v3 */
+        sfx_play(SFX_SELECT);
+        textinput_open(SCREEN_SETTINGS, "BIOS folder", "Type the folder that holds your BIOS file, for example /data/SwanStationPS5/bios",
+                       app.global.bios_folder, bios_folder_set);
+        return;
     case SP_USBFOLDER:
         sfx_play(SFX_SELECT);
         textinput_open(SCREEN_SETTINGS, "Games folder on drives",
@@ -2181,6 +2241,8 @@ static void activate(const Row *r)
 
 static void set_scope(bool game)
 {
+    if (!scope_game() && game && TH_PS1)
+        sfx_play(SFX_ERROR); /* no game to give its own settings: the console's error blip, not silence */
     if (!scope_game() || game == S.game_scope)
         return;
     if (game && !app.game_has_own)
@@ -2198,17 +2260,29 @@ bool settings_preview_allowed(void)
     return !S.remap && !S.players && !S.who;
 }
 
+#include "ps1_settings.inc"
+
 void settings_screen(uint32_t pressed)
 {
-    if (app.game)
+    if (TH_PS1)
+        ps1_settings_backdrop(); /* shelf v3: the blue shell, in a game too: Settings fills the screen */
+    else if (app.game)
         app_draw_game(45);
     else
         shelf_backdrop();
-    if (app.game)
+    if (app.game && !TH_PS1)
         draw_rect(0, 0, plat_width(), plat_height(), TH_SCRIM);
-    draw_header();
+    if (TH_PS1)
+        ps1_settings_header();
+    else
+        draw_header();
     if (!S.remap && !S.players && !S.who) /* those pages use the whole screen */
-        draw_tabs();
+    {
+        if (TH_PS1)
+            ps1_settings_tabs();
+        else
+            draw_tabs();
+    }
 
     if (S.remap)
     {
@@ -2231,6 +2305,8 @@ void settings_screen(uint32_t pressed)
     sync_framegen_rows();
     if (S.cursor < 0 || S.cursor >= tab()->count)
         first_selectable();
+    if (TH_PS1)
+        pressed = ps1_settings_input(pressed); /* shelf v3: rows without wrapping, Square = this row global, RESET */
 
     /* ------------------------------------------------ input */
     int tab_step = (pressed & BIT(BTN_R1)) ? 1 : (pressed & BIT(BTN_L1)) ? -1 : 0;
@@ -2240,7 +2316,7 @@ void settings_screen(uint32_t pressed)
         first_selectable();
         S.scroll = 0;
         S.sel_y = -1;
-        sfx_play(SFX_CLICK);
+        sfx_play(SFX_PAGE);
     }
     if (pressed & BIT(BTN_L2))
         set_scope(true);
@@ -2349,11 +2425,17 @@ void settings_screen(uint32_t pressed)
     {
         app_save_settings();
         app_close_shelf_settings();
-        sfx_play(SFX_BACK);
+        sfx_play(SFX_CLOSE);
         app.screen = app.settings_return;
         return;
     }
 
+    if (TH_PS1)
+    {
+        ps1_settings_body(r);
+        app_draw_toast();
+        return;
+    }
     draw_rows();
     draw_help(r);
     if (S.reset_hold > 0.12f)

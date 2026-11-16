@@ -13,7 +13,7 @@ Theme theme;
 static int current = -1;
 
 const char *const THEME_NAMES[THEME_COUNT] = {"Classic", "Neon Arcade", "Memory Card", "Memory Card Dark",
-                                              "Record Shelf", "Grayrat"};
+                                              "Record Shelf", "Grayrat", "PS1"};
 
 static const Theme THEMES[THEME_COUNT] = {
     [THEME_CLASSIC] = {
@@ -61,6 +61,16 @@ static const Theme THEMES[THEME_COUNT] = {
         /* a fixed grey, not the cover's colour: the brightest band (0.56, in the middle of the screen) comes out at 138 */
         .divider = 0xff3a3d47u, .cover_outline = 0xff7fa6ecu, .backdrop_tint = 0xfff6f7f7u, .backdrop = BACKDROP_FLOOR,
         .font_regular = "fonts/ChakraPetch-500.ttf", .font_bold = "fonts/ChakraPetch-700.ttf"},
+    /* PS1: sampled from the console's screens - #000120 corners, #7575EC light, #3A3A84 slate, #DEDFEC label white,
+     * #7F4FE3 arrow violet. The screens that have no console counterpart get these colours and the blue light. */
+    [THEME_PS1] = {
+        .bg = 0xff0a0a38u, .bg_deep = 0xff000120u, .card = 0xff1c1c50u, .card_soft = 0xe01c1c50u,
+        .row_selected = 0xff3a3a84u, .focus = 0xffb79cffu, .pill = 0xff262c86u, .switch_on = 0xffc11c1cu,
+        .switch_off = 0xff3a3a44u, .text = 0xffdedfecu, .text_dim = 0xffa2a2c8u, .text_soft = 0xffc8c8eeu,
+        .hint = 0xffdcdcf6u, .gold = 0xffd9b205u, .danger = 0xffff6e6eu, .good = 0xff05c96eu,
+        .divider = 0xff29295cu, .cover_outline = 0xffdedfecu, .backdrop_tint = 0xffffffffu, .backdrop = BACKDROP_PS1,
+        .layout = LAYOUT_BLOCKS,
+        .font_regular = "fonts/MPLUSRounded1c-Medium-latin.ttf", .font_bold = "fonts/MPLUSRounded1c-ExtraBold-latin.ttf"},
 };
 
 void theme_apply(int id)

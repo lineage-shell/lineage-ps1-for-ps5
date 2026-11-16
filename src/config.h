@@ -19,7 +19,10 @@ bool config_peek_string(const char *path, const char *key, char *out, size_t siz
 bool config_save(const Settings *s, const char *path);
 void config_paths(Paths *p, const char *root);
 
-/* A profile's own folders (saves, states, SwanStationPS5.ini) under dir. */
+/* A profile's own folders (saves, states, shelf.ini) under dir. */
 void config_user_paths(Paths *p, const char *dir);
+
+/* shelf v3: the settings were imported from the official app's SwanStationPS5.ini this run */
+bool config_imported(void);
 
 #endif

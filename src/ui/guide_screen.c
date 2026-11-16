@@ -13,6 +13,7 @@
 #include "../i18n.h"
 #include "../platform/platform.h"
 #include "draw.h"
+#include "ps1.h"
 #include "icons.h"
 #include "sfx.h"
 #include "text.h"
@@ -278,7 +279,7 @@ void guide_screen(uint32_t pressed)
                 app_toast("Could not open the guide");
             return;
         }
-        text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Guides"));
+        ps1_or_title(tr("Guides"));
         const float x = 360, w = plat_width() - 720.0f, top = 170, row_h = 64;
         draw_rrect(x - 16, top - 16, w + 32, G.count * row_h + 24, TH_RADIUS, TH_CARD);
         for (int i = 0; i < G.count; ++i)

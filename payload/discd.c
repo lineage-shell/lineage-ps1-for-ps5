@@ -33,7 +33,11 @@
 #include <ps5/kernel.h>
 #include <ps5/klog.h>
 
+/* The app this daemon opens. The ps1-console-shelf fork leaves it on the official app (PPSA98510); build with
+ * -DTITLE_ID='"PPSA98511"' for a daemon that opens the fork instead. */
+#ifndef TITLE_ID
 #define TITLE_ID "PPSA98510"
+#endif
 #define ROOT "/data/SwanStationPS5"
 #define CONFIG ROOT "/SwanStationPS5.ini"
 #define APP_ALIVE ROOT "/app-alive" /* the app writes the time in here every couple of seconds */

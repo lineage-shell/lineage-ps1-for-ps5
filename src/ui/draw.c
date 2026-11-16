@@ -141,10 +141,19 @@ static PlatTexture *ring_texture(int radius, int thickness)
     return tex;
 }
 
+static bool keep_round;
+
+void draw_keep_round(bool on)
+{
+    keep_round = on;
+}
+
 void draw_rrect(float x, float y, float w, float h, float r, uint32_t argb)
 {
     if (w <= 0 || h <= 0 || (argb >> 24) == 0)
         return;
+    if (TH_PS1 && !keep_round)
+        r = 0; /* the console's screens have no rounded corners: only spheres are round */
     if (r > w * 0.5f)
         r = w * 0.5f;
     if (r > h * 0.5f)
@@ -171,6 +180,8 @@ void draw_rrect_outline(float x, float y, float w, float h, float r, float thick
 {
     if (w <= 0 || h <= 0)
         return;
+    if (TH_PS1 && !keep_round)
+        r = 0;
     if (r > w * 0.5f)
         r = w * 0.5f;
     if (r > h * 0.5f)
@@ -206,6 +217,19 @@ void draw_circle(float cx, float cy, float radius, uint32_t argb)
 void draw_switch(float x, float y, float h, float t)
 {
     float w = h * 2.1f;
+    if (TH_PS1)
+    {
+        /* the console's tiny ON / OFF plates, the lit one red */
+        const float half = (w - 4) * 0.5f, size = h * 0.42f;
+        const bool on = t >= 0.5f;
+        draw_rect(x, y, half, h, on ? 0xffc11c1cu : 0xff3a3a44u);
+        draw_rect(x + half + 4, y, half, h, on ? 0xff3a3a44u : 0xffc11c1cu);
+        text_draw(x + half * 0.5f, y + (h - size) * 0.5f - size * 0.06f, size, FONT_BOLD, on ? 0xffffffffu : 0xff9a9aa6u,
+                  ALIGN_CENTER, "ON");
+        text_draw(x + half * 1.5f + 4, y + (h - size) * 0.5f - size * 0.06f, size, FONT_BOLD, on ? 0xff9a9aa6u : 0xffffffffu,
+                  ALIGN_CENTER, "OFF");
+        return;
+    }
     draw_rrect(x, y, w, h, h * 0.5f, argb_lerp(TH_SWITCH_OFF, TH_SWITCH_ON, t));
     draw_circle(x + h * 0.5f + (w - h) * t, y + h * 0.5f, h * 0.36f, 0xffffffffu);
 }

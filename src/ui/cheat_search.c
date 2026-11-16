@@ -14,6 +14,7 @@
 #include "../i18n.h"
 #include "../platform/platform.h"
 #include "draw.h"
+#include "ps1.h"
 #include "icons.h"
 #include "libretro.h"
 #include "sfx.h"
@@ -234,7 +235,7 @@ void cheat_search_screen(uint32_t pressed)
 
     app_draw_game(40);
     draw_rect(0, 0, plat_width(), plat_height(), TH_SCRIM);
-    text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Find a code"));
+    ps1_or_title(tr("Find a code"));
     char sub[160];
     if (!K.running)
         str_copy(sub, sizeof(sub), tr("Start, play until the value changes (lives, money...), come back and say how it changed."));

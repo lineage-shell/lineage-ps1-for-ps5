@@ -19,6 +19,7 @@ enum ThemeId
     THEME_MEMORY_DARK, /* Memory Card, dark */
     THEME_RECORD,      /* Record Shelf */
     THEME_GRAYRAT,    /* Grayrat: Classic's look with the colours of Memory Card Dark */
+    THEME_PS1,        /* PS1: the original console's own screens (the ps1-console-shelf fork; ui/ps1.c) */
     THEME_COUNT
 };
 
@@ -26,7 +27,8 @@ enum ThemeLayout
 {
     LAYOUT_FLOW,   /* the cover flow */
     LAYOUT_GRID,   /* a grid of covers and a detail card */
-    LAYOUT_SPINES  /* spines on a shelf, the chosen one pulled out */
+    LAYOUT_SPINES, /* spines on a shelf, the chosen one pulled out */
+    LAYOUT_BLOCKS  /* memory-card blocks, 15 to a page, and the case of the chosen game (PS1) */
 };
 
 enum ThemeBackdrop
@@ -35,7 +37,8 @@ enum ThemeBackdrop
     BACKDROP_GRID,  /* a dark room and a glowing grid floor */
     BACKDROP_FLAT,  /* an even ground, lighter at the top */
     BACKDROP_LAMP,  /* a warm pool of light from above */
-    BACKDROP_FLOOR  /* a wall that lightens to the middle and, from there, a much darker floor */
+    BACKDROP_FLOOR, /* a wall that lightens to the middle and, from there, a much darker floor */
+    BACKDROP_PS1    /* the console's single indigo light and its spheres (ui/ps1.c) */
 };
 
 typedef struct
@@ -52,6 +55,8 @@ typedef struct
 } Theme;
 
 extern Theme theme;
+/* The PS1 console look is on (THEME_PS1): the screens draw themselves the console's way. */
+#define TH_PS1 (theme.layout == LAYOUT_BLOCKS)
 extern const char *const THEME_NAMES[THEME_COUNT];
 /* Colours, fonts and backdrop of a theme; reloads the fonts when they change. */
 void theme_apply(int id);
@@ -80,7 +85,7 @@ int theme_current(void);
 #define TH_PILL_A(a) (((uint32_t)(a) << 24) | (theme.pill & 0xffffffu))
 #define TH_BG_A(a) (((uint32_t)(a) << 24) | (theme.bg & 0xffffffu))
 /* what dims the game behind the in-game screens: dark, or light for light themes */
-#define TH_SCRIM (theme.light ? TH_BG_A(0xd8) : (0x90000000u | (theme.bg_deep & 0xffffffu)))
+#define TH_SCRIM (TH_PS1 ? 0u : theme.light ? TH_BG_A(0xd8) : (0x90000000u | (theme.bg_deep & 0xffffffu)))
 
 /* sizes, in 1920x1080 screen pixels */
 #define TH_RADIUS 16.0f

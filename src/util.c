@@ -14,6 +14,22 @@
 
 static FILE *log_file;
 
+/* shelf v3: seconds since the first log line (the app's start), on every line */
+static double log_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+static double log_start = -1.0;
+
+double SwanStationPS5_uptime(void)
+{
+    if (log_start < 0)
+        log_start = log_now();
+    return log_now() - log_start;
+}
+
 void SwanStationPS5_log_open(const char *path)
 {
     if (log_file)
@@ -39,10 +55,11 @@ void SwanStationPS5_log(const char *fmt, ...)
 
     size_t len = strlen(line);
     const char *nl = (len > 0 && line[len - 1] == '\n') ? "" : "\n";
-    fprintf(stderr, "[SwanStationPS5] %s%s", line, nl);
+    const double t = SwanStationPS5_uptime();
+    fprintf(stderr, "[SwanStationPS5] [%7.3f] %s%s", t, line, nl);
     if (log_file)
     {
-        fprintf(log_file, "%s%s", line, nl);
+        fprintf(log_file, "[%7.3f] %s%s", t, line, nl);
         fflush(log_file);
     }
 }

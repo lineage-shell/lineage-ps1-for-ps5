@@ -54,6 +54,7 @@ typedef struct
     float real_fps;           /* and the game's own among them (a 30 fps game repeats each picture on a 60 fps core) */
     PadState pads[SwanStationPS5_MAX_PADS]; /* this frame's controllers, as read (by player) */
     bool quit_requested;      /* leave the main loop and close the app */
+    bool intro;               /* P1-18: the BIOS's startup is playing; any button or its end goes to the library */
     double play_seconds;      /* how long this game has been played since it started */
 } App;
 
@@ -67,8 +68,15 @@ void app_draw_toast(void);
 void app_message_box(const char *message);
 /* The running game behind a menu; dim 255 = full brightness. */
 void app_draw_game(uint8_t dim);
+/* The running game's picture, whole, in a rectangle of the 1080p screen (the PS1 theme's game menu). */
+void app_draw_game_in(float x, float y, float w, float h);
 void app_state_path(char *out, size_t size, int slot);
 void app_describe_bios(char *out, size_t size);
+/* shelf v3: the folders searched for a BIOS (ours first), a BIOS file in the one in use, and a new search (true: found) */
+int app_bios_dirs(const char **out, int max);
+bool app_bios_present(void);
+bool app_bios_recheck(void);
+void app_bios_set_folder(const char *dir); /* Settings > System > BIOS folder: searched first from now on */
 void app_rescan(void);
 void app_restart_covers(void);
 /* The controller that moves through the app (the shelf, Settings, dialogs): player 1's; the others are only for playing.
