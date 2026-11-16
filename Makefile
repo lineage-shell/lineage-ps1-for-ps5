@@ -51,6 +51,9 @@ PS5_FTP_PASSWORD ?= codex
 DEPLOY_DRY_RUN ?= 0
 TITLE_ID ?=
 APP_NAME ?=
+# The tile's name in the package (param.json titleName): "PlayStation" (also in sce_sys/param.json). Set it (here or
+# in a local .env) to name a build differently.
+APP_TITLE_NAME ?= PlayStation
 APP_CATEGORY ?= game
 CONTENT_SUFFIX ?=
 HOST_CC ?= clang
@@ -73,7 +76,7 @@ export APP_SOURCE_DIR APP_PARAM APP_SCE_SYS APP_ASSETS APP_ROOT_FILES
 export APP_LAPY_HELPER
 export PACBREW_PACKAGES PACBREW_INCLUDE_PATHS PACBREW_STATIC_ARCHIVES
 export PS5_HOST FTP_PORT DEPLOY_FORMAT PS5_FTP_USER PS5_FTP_PASSWORD DEPLOY_DRY_RUN
-export TITLE_ID APP_NAME APP_CATEGORY CONTENT_SUFFIX
+export TITLE_ID APP_NAME APP_CATEGORY CONTENT_SUFFIX APP_TITLE_NAME
 
 RUNTIME := runtime/libc.prx
 RUNTIME_INPUTS := tools/rebuild-libc.sh tools/build-host-tools.sh tools/ninja-build.sh \
@@ -324,7 +327,7 @@ endif
 help:
 	@printf '%s\n' \
 	  'SwanStationPS5:' \
-	  'make                 Build the PS5 app folder dist/PPSA98510 (core + frontend)' \
+	  'make                 Build the PS5 app folder dist/PPSA98511 (core + frontend)' \
 	  'make deploy PS5_HOST=<ip>  Build and upload to /data/homebrew over FTP' \
 	  '' \
 	  'Boilerplate:' \

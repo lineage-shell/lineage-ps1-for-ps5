@@ -340,6 +340,22 @@ mkdir -p "$app/sce_sys" "$app/sce_module"
     --magic "$fself_magic"
 
 cp "$param" "$app/sce_sys/param.json"
+if [[ -n ${APP_TITLE_NAME:-} ]]; then
+    # the tile's name for this build only (APP_TITLE_NAME, e.g. from a local .env); git keeps the public one
+    python3 - "$app/sce_sys/param.json" "$APP_TITLE_NAME" <<'PY'
+import json, sys
+path, name = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    p = json.load(f)
+for lang, entry in p.get("localizedParameters", {}).items():
+    if isinstance(entry, dict) and "titleName" in entry:
+        entry["titleName"] = name
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(p, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
+    echo "==> tile name: $APP_TITLE_NAME"
+fi
 for asset in icon0.png pic0.dds pic1.dds snd0.at9; do
     [[ -f $root/$app_sce_sys/$asset ]] && cp "$root/$app_sce_sys/$asset" "$app/sce_sys/$asset"
 done

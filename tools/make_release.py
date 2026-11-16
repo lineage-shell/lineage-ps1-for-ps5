@@ -25,7 +25,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = "PPSA98510"
+APP = "PPSA98511"
 
 
 def read_version():

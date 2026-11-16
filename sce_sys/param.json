@@ -7,9 +7,9 @@
   "attribute": 0,
   "attribute2": 0,
   "attribute3": 64,
-  "conceptId": "98510",
+  "conceptId": "98511",
   "contentBadgeType": 1,
-  "contentId": "UP9000-PPSA98510_00-SWANSTATIONPS501",
+  "contentId": "UP9000-PPSA98511_00-SWANSTATIONPS1F1",
   "contentVersion": "01.006.005",
   "downloadDataSize": 256,
   "gameIntent": {
@@ -22,7 +22,7 @@
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "SwanStationPS5"
+      "titleName": "PlayStation"
     }
   },
   "masterVersion": "01.00",
@@ -33,6 +33,6 @@
   },
   "requiredSystemSoftwareVersion": "0x0000000000000000",
   "sdkVersion": "0x0000000000000000",
-  "titleId": "PPSA98510",
+  "titleId": "PPSA98511",
   "versionFileUri": ""
 }
