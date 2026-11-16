@@ -1,0 +1,14 @@
+# Second start: games added, still no covers or logo cache (laptop/first-run.sh).
+wait 120
+shot g01-opening
+wait 560
+shot g02-menu
+press cross
+wait 10
+shot g03-library-first-frames
+wait 120
+shot g04-library-settled
+press cross
+wait 60
+shot g05-game-page
+quit

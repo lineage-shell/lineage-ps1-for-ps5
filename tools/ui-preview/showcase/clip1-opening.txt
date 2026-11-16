@@ -1,0 +1,3 @@
+# Showcase clip 1: the opening from app start to the main menu (startup_intro=1)
+wait 1000
+quit

@@ -1,0 +1,55 @@
+# The PS1 shelf v3, second pass: main menu, library, keypad, game page, per-game settings and the in-game menu.
+# Run it twice: with shelf_shape=0 / shelf_splat=0 and with shelf_shape=1 / shelf_splat=1 in the preview's
+# build/laptop-preview/root/SwanStationPS5.ini (Settings > Library > Screen shape / Splatters).
+wait 60
+shot y04-main-menu-43
+press up
+wait 5
+press cross
+wait 100
+shot y05-library-43
+press triangle
+wait 10
+shot y06-keypad-43
+press circle
+wait 10
+press cross
+wait 100
+shot y07-game-43
+press down
+press down
+wait 5
+press cross
+wait 60
+shot y08-per-game-43
+press circle
+wait 40
+press up
+press up
+wait 5
+press cross
+wait 300
+hold l3+r3 50
+wait 60
+shot y09-ingame-menu-43
+press down
+wait 10
+shot y10-ingame-save
+press r1
+press r1
+wait 10
+shot y11-ingame-slot3
+press cross
+wait 4
+shot y12-saved-toast
+wait 56
+hold l3+r3 50
+wait 60
+press down
+wait 10
+press right
+wait 10
+shot y13-ingame-load
+press circle
+wait 40
+quit

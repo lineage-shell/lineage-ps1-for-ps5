@@ -1,0 +1,22 @@
+# clip 4: library, 6x2 or 4:3 (set shelf_layout / shelf_shape first)
+wait 70
+press cross
+wait 130
+press right
+wait 22
+press right
+wait 22
+press right
+wait 22
+press down
+wait 22
+press right
+wait 22
+press right
+wait 22
+press r1
+wait 50
+press l1
+wait 50
+wait 30
+quit

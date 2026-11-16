@@ -1,0 +1,14 @@
+# Settings > About: version, credits (who made what), BIOS / games / drives / data folder / updates.
+wait 400
+press down
+wait 6
+press cross
+wait 120
+press l1
+wait 20
+shot a01-about-tab
+hold down 200
+wait 10
+shot a02-about-credits
+wait 10
+quit

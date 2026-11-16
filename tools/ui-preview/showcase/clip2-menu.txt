@@ -1,0 +1,13 @@
+# clip 2: main menu (startup_intro=0)
+wait 90
+press down
+wait 45
+press up
+wait 45
+press down
+wait 45
+press up
+wait 40
+press cross
+wait 140
+quit
