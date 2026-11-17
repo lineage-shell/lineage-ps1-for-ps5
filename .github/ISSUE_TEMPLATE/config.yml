@@ -1,5 +1,1 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Discord Support
-    url: https://discord.gg/MseFnnfYzt
-    about: Ask in the Discord #help channel.
+blank_issues_enabled: true
