@@ -2,7 +2,7 @@
 
 # Lineage PS1 for PS5
 
-Welcome to **Lineage**, my attempt at a faithful interface for emulators. Right now that's this and the [PS2 version](https://github.com/lineage-shell/lineage-ps2-for-ps5), both on PS5. In the future, I'd like to run the same design across PC emulators, from one shared core. There's a lot of research and QA before we get there though!
+Hi, I'm kurolume :wave: Welcome to **Lineage**, my attempt at a faithful interface for emulators. Right now that's this and the [PS2 version](https://github.com/lineage-shell/lineage-ps2-for-ps5), both on PS5. In the future, I'd like to run the same design across PC emulators, from one shared core. There's a lot of research and QA before we get there though!
 
 ## The original PlayStation's menus, back on your PS5
 
@@ -10,7 +10,12 @@ This is a front end for [SwanStationPS5](https://github.com/darkxex/SwanStationP
 
 None of Sony's stuff is in here. The logo screens, the font and the start-up sound come from your own BIOS (and the 3D PlayStation logo from one of your own discs).
 
-> Screenshots and a video are on the release page and in the announcement post. They're not in the repo because they show artwork from a Sony BIOS.
+<table>
+<tr><td><img src="docs/screenshots/01-sony.jpg" width="100%" alt="Sony screen"><br><sub>Sony screen</sub></td><td><img src="docs/screenshots/02-playstation.jpg" width="100%" alt="PlayStation screen"><br><sub>PlayStation screen</sub></td><td><img src="docs/screenshots/03-main-menu.jpg" width="100%" alt="Main menu"><br><sub>Main menu</sub></td></tr>
+<tr><td><img src="docs/screenshots/04-library.jpg" width="100%" alt="Game Library"><br><sub>Game Library</sub></td><td><img src="docs/screenshots/05-game-page.jpg" width="100%" alt="Game page"><br><sub>Game page</sub></td><td><img src="docs/screenshots/06-settings.jpg" width="100%" alt="Settings"><br><sub>Settings</sub></td></tr>
+</table>
+
+Video: see the [v1.0 release](../../releases/tag/v1.0).
 
 ## Features
 
